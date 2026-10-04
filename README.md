@@ -1,66 +1,47 @@
-# JakoScripts — MM2
+# JakoScripts
 
-Скрипт для Murder Mystery 2. Оформление — VANTA Style A «Dark Violet Glass».
+Скрипты для Roblox. Оформление — VANTA Style A «Dark Violet Glass».
 
 ```
-JakoScripts | MM2  v3.0
 окно 480x360 · сайдбар 150 · Combat / Visuals / Movement / Config · RightShift
 ```
 
-## Установка
+## Скрипты
 
-**Приватный репозиторий (как сейчас).** Вставь в инжектор содержимое `JakoScripts_bootstrap.lua`, предварительно положив свой токен в `CFG.token`:
+| Игра | Файл | Вкладки | Ссылка для инжектора |
+|---|---|---|---|
+| Murder Mystery 2 | `JakoScripts.lua` | Combat · Visuals · Movement · Config | [vanta_mm2.lua](https://gist.githubusercontent.com/JakoScripts/d9426b0772256a4709608e96f710508d/raw/vanta_mm2.lua) |
+| The Lost Front | `JakoScripts_lostfront.lua` | Combat · Visuals · Movement · Config | [vanta_lostfront.lua](https://gist.githubusercontent.com/JakoScripts/de7c068ca91e534ed54f3e64d191483f/raw/vanta_lostfront.lua) |
+| Steal an Egg | `JakoScripts_stealegg.lua` | Farm · Visuals · Stealth · Config | [vanta_stealegg.lua](https://gist.githubusercontent.com/JakoScripts/5f6e4bcab0f3df2680a1944a29362b1a/raw/vanta_stealegg.lua) |
+| Blade Ball | `JakoScripts_bladeball.lua` | Combat · Timing · Visuals · Config | [vanta_bladeball.lua](https://gist.githubusercontent.com/JakoScripts/0ce0c7ccfe1655547e19253ab16138b2/raw/vanta_bladeball.lua) |
+| Deagle Duels | `JakoScripts_deagle.lua` | Combat · Visuals · Misc · Config | [vanta_deagle_duels.lua](https://gist.githubusercontent.com/JakoScripts/f037386d8aac2c924d78bee6157c3f66/raw/vanta_deagle_duels.lua) |
+| FPV Drone Game | `JakoScripts_fpv_esp.lua` | Visuals · Drones · Config | [vanta_fpv_esp.lua](https://gist.githubusercontent.com/JakoScripts/61316c34897c57a840d0e1bdd24724ef/raw/vanta_fpv_esp.lua) |
+| generic FPS | `JakoScripts_hitbox.lua` | Combat · Targets · Config | [vanta_hitbox.lua](https://gist.githubusercontent.com/JakoScripts/61e8e91041a490a3e8f258cfbbcc51c7/raw/vanta_hitbox.lua) |
+| generic shooter | `JakoScripts_wh.lua` | Visuals · Config | [vanta_wh.lua](https://gist.githubusercontent.com/JakoScripts/455138e3d75b17f9610507f66b7594aa/raw/vanta_wh.lua) |
 
-1. GitHub → Settings → Developer settings → Fine-grained tokens → Generate new token
-2. Repository access — только `JakoScripts`
-3. Permissions → Contents → **Read-only**
-4. Токен идёт в `CFG.token`, весь файл вставляется в инжектор
-
-Токен лежит внутри скрипта: кто получил файл — получил токен. Поэтому только fine-grained, только один репозиторий, только чтение. Отзывается одной кнопкой в настройках GitHub.
-
-**Публичный репозиторий.** Одна строка, токен не нужен:
+Запуск — одной строкой, подставь ссылку из таблицы:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts_loader.lua"))()
+loadstring(game:HttpGet("https://gist.githubusercontent.com/JakoScripts/<id>/raw/<file>.lua"))()
 ```
 
-**Локально.** Если файл лежит в workspace экзекутора:
+Локально, если файл лежит в workspace экзекутора:
 
 ```lua
-loadstring(readfile("JakoScripts.lua"))()
+loadstring(readfile("JakoScripts_wh.lua"))()
 ```
 
 ## Обновление
 
-Репозиторий — источник. Патч `JakoScripts.lua` подтягивается при следующем запуске, строку в инжекторе менять не нужно.
+Репозиторий — источник. Правки идут в `main`, клиент тянет свежую версию при запуске: строку в инжекторе менять не нужно.
 
-## Файлы
+```lua
+loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts_wh.lua"))()
+```
 
-| Файл | Что это |
-|---|---|
-| `JakoScripts.lua` | основной скрипт, 2170 строк |
-| `JakoScripts_bootstrap.lua` | короткий вход для приватного репо (токен) |
-| `JakoScripts_loader.lua` | лоадер с миррорами и локальным фолбэком |
-| `JakoScripts_silencer.lua` | глушит нативные тосты Roblox (`SetCore SendNotification`) |
-| `JakoScripts_preview.py` | генератор мокапа интерфейса |
-| `JakoScripts_style_a_preview.png` | превью дизайна, 2x |
-| `JakoScripts_check.py` | структурная проверка Luau (скобки, блоки, скоуп) |
+Репозиторий приватный, поэтому raw без токена отдаёт 404 — либо публичный доступ, либо `JakoScripts_bootstrap.lua` с fine-grained PAT (Contents: Read-only) в `CFG.token`.
 
-## Возможности
-
-**Combat** — аимбот (FOV, плавность, часть тела, hold RMB, проверка видимости через raycast), автострельба, kill aura с радиусом, автоЭкип инструмента.
-
-**Visuals** — ESP по ролям (убийца / шериф / невинные) с `Highlight DepthMode.AlwaysOnTop`, ник с тегом `[M]/[S]/[I]`, дистанция, хп, трассеры, предметы (монеты, выпавший пистолет), fullbright с полным восстановлением света.
-
-**Movement** — спидхак, прыжок, noclip с восстановлением коллизий, бесконечный прыжок, fly (клавиатура + мобильный джойстик), магнит монет, телепорт к пистолету.
-
-**Config** — переназначение клавиши, прозрачность панели, акрил, вотермарка, уведомления, save / load / reset профиля, unload.
-
-## Требования
-
-Экзекутор уровня Delta / Solara / Xeno / Wave / Evon. `Drawing` — опционально: без него трассеры и FOV-круг отключаются, остальное работает. `firetouchinterest` нужен только для магнита монет.
-
-## Дизайн
+## Интерфейс
 
 | Токен | Значение |
 |---|---|
@@ -75,6 +56,33 @@ loadstring(readfile("JakoScripts.lua"))()
 | switch | ON `#7C3AED`, OFF `#FFFFFF1E` |
 | slider | трек `#FFFFFF15`, заливка `#7C3AED → #C4B5FD` |
 
-Шрифт Inter с откатом на Gotham. Иконки — lucide `target / eye / zap / settings`, нарисованы вектором. Эмодзи в интерфейсе нет.
+Шрифт Inter с откатом на Gotham. Иконки — lucide `target / eye / zap / settings`, нарисованы вектором. Эмодзи в интерфейсе нет. Клавиша скрытия окна — RightShift, переназначается в Config.
 
 ![Style A](JakoScripts_style_a_preview.png)
+
+Превью остальных: `JakoScripts_<имя>_preview.png`.
+
+## Файлы
+
+| Файл | Что это |
+|---|---|
+| `StyleA_shell.lua` | шелл Style A, вшивается в каждый скрипт байт-в-байт |
+| `JakoScripts_<игра>.lua` | скрипты, 947–1734 строк |
+| `JakoScripts_bootstrap.lua` | вход для приватного репо (токен) |
+| `JakoScripts_loader.lua` | лоадер с миррорами и локальным фолбэком |
+| `JakoScripts_silencer.lua` | глушит нативные тосты Roblox (`SetCore SendNotification`) |
+| `JakoScripts_preview.py` | рендер мокапа: читает вкладки прямо из кода |
+| `JakoScripts_check.py` | структурная проверка Luau: блоки, вызовы, шелл-API, сервисы |
+| `inject_shell.py` | вставка/обновление шелла по маркеру `-- @@SHELL@@` |
+| `verify_refactor.py` | диф логики между исходником и рефактором |
+
+## Заметки по сборке
+
+Каждый скрипт собран одной заменой: старый UI-блок вырезан до маркера `-- @@SHELL@@`, игровая логика не тронута. Шелл подставляется скриптом, поэтому во всех восьми файлах он идентичен — правка шелла не требует ручной синхронизации:
+
+```powershell
+python inject_shell.py            # обновит шелл во всех JakoScripts_*.lua
+python JakoScripts_check.py *.lua # структурная проверка
+```
+
+В гистах рядом с каждым скриптом лежит `*_obf.lua` — обфусцированная копия. Она собирается отдельным тулзом и после редизайна содержит старую версию: для обф-ссылок нужна переобфускация.

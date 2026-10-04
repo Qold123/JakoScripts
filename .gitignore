@@ -1,5 +1,8 @@
 # рабочая папка, не в репозиторий
 vanta-mm2.json
 _session_dump/
+_gists/
+_dump_*
+_*.py
 __pycache__/
 *.log
