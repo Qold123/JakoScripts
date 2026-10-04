@@ -9,3 +9,7 @@ _probe_*
 __pycache__/
 *.log
 *_obf.lua
+
+# локальные входы с токеном — в репозиторий не попадают
+JakoScripts_lostfront_bootstrap.lua
+JakoScripts_lostfront_oneline.txt
