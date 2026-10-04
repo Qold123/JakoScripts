@@ -450,6 +450,15 @@ local StyleA = (function()
         return l
     end
 
+    -- Текст в CoreGui с AutoLocalize = true заставляет движок разбирать каждую
+    -- строку через CoreGui.RobloxGui.Modules.Common.Locales. Под экзекутором этот
+    -- модуль ломается, и консоль забивается "attempt to call a nil value".
+    -- Локаль гасится на всех текстовых узлах: label() и mkButton().
+    local function mkButton()
+        local b = Instance.new("TextButton")
+        pcall(function() b.AutoLocalize = false end)
+        return b
+    end
     -- ---------- lucide icons, vectors ----------
     local function tick(parent, x, y, w, h, col, rot)
         local f = Instance.new("Frame")
@@ -668,7 +677,7 @@ local StyleA = (function()
         local statText = label(statChip, "—", 10, P.muted, "med")
         statText.Size = UDim2.new(1, -22, 1, 0) statText.Position = UDim2.new(0, 20, 0, 0) statText.ZIndex = 5
 
-        local minBtn = Instance.new("TextButton")
+        local minBtn = mkButton()
         minBtn.BackgroundTransparency = 1 minBtn.Text = "" minBtn.AutoButtonColor = false
         minBtn.Size = UDim2.new(0, 22, 0, 22) minBtn.Position = UDim2.new(1, -34, 0, 18)
         minBtn.ZIndex = 6 minBtn.Parent = win
@@ -682,11 +691,11 @@ local StyleA = (function()
         content.Position = UDim2.new(0, SIDE + 16, 0, 48) content.ZIndex = 3 content.Parent = win
 
         -- drag rail
-        local rail = Instance.new("TextButton")
+        local rail = mkButton()
         rail.BackgroundTransparency = 1 rail.Text = "" rail.AutoButtonColor = false
         rail.Size = UDim2.new(1, 0, 0, 44) rail.ZIndex = 2 rail.Parent = win
 
-        local pill = Instance.new("TextButton")
+        local pill = mkButton()
         pill.BackgroundColor3 = P.bg pill.BackgroundTransparency = 0.12 pill.Text = ""
         pill.AutoButtonColor = false pill.Size = UDim2.new(0, 42, 0, 42)
         pill.Position = UDim2.new(0, 16, 0.5, -21) pill.Visible = false
@@ -800,7 +809,7 @@ local StyleA = (function()
                 local r = rowBox(sc, 40)
                 local l = label(r, text, 12, state[key] and P.text or P.muted, "reg")
                 l.Size = UDim2.new(1, -66, 1, 0) l.Position = UDim2.new(0, 14, 0, 0) l.ZIndex = 5
-                local b = Instance.new("TextButton")
+                local b = mkButton()
                 b.BackgroundTransparency = 1 b.Text = "" b.AutoButtonColor = false
                 b.Size = UDim2.new(1, 0, 1, 0) b.ZIndex = 7 b.Parent = r
                 local sw = mkSwitch(r, key)
@@ -839,7 +848,7 @@ local StyleA = (function()
                 knob.BackgroundColor3 = P.white knob.BorderSizePixel = 0
                 knob.AnchorPoint = Vector2.new(0.5, 0.5) knob.Size = UDim2.new(0, 12, 0, 12)
                 knob.Position = UDim2.new(0, 0, 0.5, 0) knob.ZIndex = 7 knob.Parent = track circle(knob)
-                local hit = Instance.new("TextButton")
+                local hit = mkButton()
                 hit.BackgroundTransparency = 1 hit.Text = "" hit.AutoButtonColor = false
                 hit.Size = UDim2.new(1, 0, 0, 24) hit.Position = UDim2.new(0, 0, 0, 24)
                 hit.ZIndex = 8 hit.Parent = r
@@ -883,7 +892,7 @@ local StyleA = (function()
                 local r = rowBox(sc, 40)
                 local l = label(r, text, 12, P.muted, "reg")
                 l.Size = UDim2.new(1, -120, 1, 0) l.Position = UDim2.new(0, 14, 0, 0) l.ZIndex = 5
-                local b = Instance.new("TextButton")
+                local b = mkButton()
                 b.BackgroundColor3 = P.white b.BackgroundTransparency = A.track
                 b.BorderSizePixel = 0 b.Text = "" b.AutoButtonColor = false
                 b.Size = UDim2.new(0, 104, 0, 24) b.Position = UDim2.new(1, -116, 0.5, -12)
@@ -906,7 +915,7 @@ local StyleA = (function()
                 local r = rowBox(sc, 40)
                 local l = label(r, text, 12, P.muted, "reg")
                 l.Size = UDim2.new(1, -120, 1, 0) l.Position = UDim2.new(0, 14, 0, 0) l.ZIndex = 5
-                local b = Instance.new("TextButton")
+                local b = mkButton()
                 b.BackgroundColor3 = P.white b.BackgroundTransparency = A.track
                 b.BorderSizePixel = 0 b.Text = "" b.AutoButtonColor = false
                 b.Size = UDim2.new(0, 104, 0, 24) b.Position = UDim2.new(1, -116, 0.5, -12)
@@ -927,7 +936,7 @@ local StyleA = (function()
                 return r
             end
             function ph:Button(text, style, cb)
-                local b = Instance.new("TextButton")
+                local b = mkButton()
                 b.BorderSizePixel = 0 b.AutoButtonColor = false b.Text = ""
                 b.Size = UDim2.new(1, 0, 0, 34) b.ZIndex = 4 b.Parent = sc corner(b, 12)
                 local ghost = (style == "ghost")
@@ -966,7 +975,7 @@ local StyleA = (function()
         function ui:Tab(name, iconName)
             local sc = newPage(name)
             tabOrder = tabOrder + 1
-            local b = Instance.new("TextButton")
+            local b = mkButton()
             b.Name = name b.BackgroundTransparency = 1 b.Text = "" b.AutoButtonColor = false
             b.Size = UDim2.new(1, 0, 0, 38) b.LayoutOrder = tabOrder b.ZIndex = 5 b.Parent = nav
             local rl = Instance.new("Frame")
@@ -1081,6 +1090,20 @@ local StyleA = (function()
             if i.KeyCode == KEY then setVisible(not root.Visible) end
         end)
         chipText.Text = string.upper(string.sub(KEY.Name, 1, 8))
+
+        -- Страховка: строки создаются лениво, при вызове :Tab() из скрипта,
+        -- поэтому одного прохода внутри label() мало. Раз в секунду добираем
+        -- всё, что появилось после сборки окна.
+        task.spawn(function()
+            for _ = 1, 12 do
+                task.wait(1)
+                for _, d in ipairs(gui:GetDescendants()) do
+                    if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+                        if d.AutoLocalize then pcall(function() d.AutoLocalize = false end) end
+                    end
+                end
+            end
+        end)
 
         return ui
     end
