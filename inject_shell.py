@@ -17,7 +17,10 @@ SHELL = "StyleA_shell.lua"
 MARK = "-- @@SHELL@@"
 BANNER_OPEN = "-- == VANTA STYLE A SHELL — inline block, правки только в шапке =="
 BANNER_CLOSE = "-- == /VANTA STYLE A SHELL =="
-STRAY = re.compile(r"(?m)^-- =+ .*SHELL.* =+\s*\n?")
+# маркер обязан быть отдельной строкой: литерал в комментарии не должен приниматься за точку вставки
+MARK_LINE = re.compile(r"(?m)^[ \t]*--[ \t]*@@SHELL@@[ \t]*$")
+# срезаем только собственный legacy-заголовок, а не любую строку со словом SHELL
+STRAY = re.compile(r"(?m)^-- =+ VANTA STYLE A SHELL \(inline\) =+\s*\n?")
 
 
 def shell_body():
@@ -56,11 +59,23 @@ def process(path, body):
         end = src.find(BANNER_CLOSE) + len(BANNER_CLOSE)
         src = src[:start] + MARK + src[end:]
         src = STRAY.sub("", src)
-    if MARK not in src:
-        return "no marker, skipped"
+
+    hits = MARK_LINE.findall(src)
+    if not hits:
+        return "no marker line, skipped"
+    if len(hits) > 1:
+        return f"ОТКАЗ: маркер встречается {len(hits)} раз отдельной строкой — вставка неоднозначна"
+
     block = f"{BANNER_OPEN}\n{body}\n{BANNER_CLOSE}"
-    src = src.replace(MARK, block, 1)
+    src = MARK_LINE.sub(lambda _m: block, src, count=1)
     src = normalize_handles(src)
+
+    # после вставки в файле должно остаться ровно два баннера и ни одного маркера
+    if MARK_LINE.search(src):
+        return "ОТКАЗ: маркер остался после вставки"
+    if src.count(BANNER_OPEN) != 1 or src.count(BANNER_CLOSE) != 1:
+        return "ОТКАЗ: баннеры шелла продублированы"
+
     with open(path, "w", encoding="utf-8", newline="\n") as f:
         f.write(src)
     return f"{'refreshed' if had_block else 'injected'} ({len(body)} chars shell)"

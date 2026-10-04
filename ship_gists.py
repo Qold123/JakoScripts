@@ -55,9 +55,18 @@ def obf_path(plain_path, prefix):
     return f"{base}_obf.lua"
 
 
+def run(cmd, timeout=180):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        class R:
+            returncode, stdout, stderr = 124, "", f"timeout after {timeout}s"
+        return R()
+
+
 def checker_profile(path):
     """Собирает проблемы, которые видит структурная проверка (имена и сервисы)."""
-    r = subprocess.run([PY, "JakoScripts_check.py", path], capture_output=True, text=True)
+    r = run([PY, "JakoScripts_check.py", path])
     out = r.stdout
     names, services = set(), set()
     section = None
@@ -83,7 +92,7 @@ def verify_obf(plain, obf):
     """Обф-сборка не должна добавлять ни одной новой проблемы к обычной."""
     pn, ps, pbad = checker_profile(plain)
     on, os_, obad = checker_profile(obf)
-    r = subprocess.run([PY, "obf_diff.py", plain, obf, "--assert"], capture_output=True, text=True)
+    r = run([PY, "obf_diff.py", plain, obf, "--assert"])
     problems = []
     if obad or pbad:
         problems.append("структура файла сломана")
@@ -106,8 +115,7 @@ def build_obf(plain_path, key, force=False):
     if not os.path.exists("light_obf.py"):
         return None
     prefix = "_" + key[:2].upper()
-    r = subprocess.run([PY, "light_obf.py", plain_path, "-o", out, "--prefix", prefix],
-                       capture_output=True, text=True)
+    r = run([PY, "light_obf.py", plain_path, "-o", out, "--prefix", prefix])
     if r.returncode != 0:
         print(f"  obf build failed for {plain_path}: {r.stderr.strip()[:200]}")
         return None
@@ -125,6 +133,7 @@ def main():
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     check_only = "--check" in sys.argv
     force_obf = "--rebuild-obf" in sys.argv
+    no_obf = "--no-obf" in sys.argv
     keys = args or list(TARGETS)
 
     for key in keys:
@@ -149,7 +158,7 @@ def main():
                 print(f"{key:<10} {remote:<28} local={want:<7} {flag}")
             continue
 
-        obf = build_obf(plain, key, force=force_obf)
+        obf = None if no_obf else build_obf(plain, key, force=force_obf)
         files = {plain_name: plain}
         if obf and os.path.exists(obf):
             files[obf_name] = obf

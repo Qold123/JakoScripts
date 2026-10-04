@@ -452,7 +452,8 @@ def main():
         spec = parse_ui(path)
         if not spec["tabs"]:
             spec = HAND_SPECS.get(os.path.basename(path)) or spec
-        out = spec.get("out") or (re.sub(r"\.lua$", "", path) + "_preview.png")
+        out = spec.get("out") or HAND_SPECS.get(os.path.basename(path), {}).get("out") \
+            or (re.sub(r"\.lua$", "", path) + "_preview.png")
         if not spec["tabs"]:
             print(f"{path:<32} skipped: вкладки не распознаны")
             continue
