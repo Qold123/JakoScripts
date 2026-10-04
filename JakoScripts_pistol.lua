@@ -1,9 +1,13 @@
--- JakoScripts PISTOL ARENA v1 | Luau | [Ранговая] Арена пистолетов | VANTA Style A
--- Аимбот для FPS (доводка камеры, FOV + воллчек + сглаживание), триггербот,
--- ESP-оверлей (боксы/ники/дистанция). Только Drawing — деталей в игре нет.
+-- JakoScripts PISTOL ARENA v2.0 | Luau | [Ранговая] Арена пистолетов | VANTA Style A
+-- Аимбот для FPS, триггербот, ESP-оверлей (боксы/ники/дистанция). Только Drawing —
+-- деталей в игре скрипт не создаёт.
+-- v2.0 — против детекта: наведение идёт движением МЫШИ (mousemoverel), а не
+-- записью Camera.CFrame. Игра крутит камеру сама и видит нормальный ввод,
+-- GetMouseDelta не ноль. Плюс потолок поворота, реакция, разброс и рандомный
+-- такт триггербота — против поведенческого анализа.
 -- Ранкед = античит строже: только альт, legit-настройки по умолчанию.
 -- UI: Style A — окно 480x360, сайдбар 150, вкладки Combat / Visuals / Movement / Config,
--- RightShift — скрыть окно. Уведомления — тосты шелла, StarterGui:SetCore(...) не вызывается.
+-- RightShift — скрыть окно. Уведомления — тосты шелла.
 -- Запуск: loadstring(game:HttpGet("RAW_URL"))()
 
 local Players = game:GetService("Players")
@@ -31,10 +35,16 @@ local State = {
     aim_smooth = 25,        -- 1..100, меньше = плавнее/легитнее
     aim_wallcheck = true,
     aim_maxdist = 1200,
+    aim_curve = "EaseOut",  -- Linear | EaseOut | EaseInOut
+    aim_maxstep = 6,        -- потолок поворота, пикселей за кадр (0 = без потолка)
+    aim_reaction = 120,     -- мс паузы перед доводкой на новой цели
+    aim_jitter = 0.8,       -- разброс прицела, пикселей
 
     triggerbot = false,     -- авто-выстрел при наведении
     trigger_dist = 12,      -- пикселей от центра
-    trigger_delay = 120,    -- мс, в расчёте делится на 1000
+    trigger_ms_min = 60,    -- нижняя граница паузы между выстрелами
+    trigger_ms_max = 180,   -- верхняя: интервал рандомится, ровный такт палится
+    trigger_chance = 85,    -- шанс выстрелить, % (остальное — пропуск, как у живой руки)
 
     esp = true,
     boxes = true,
@@ -58,8 +68,24 @@ local aiming = false
 local rmbDown = false
 local cachedPart, cachedPlr = nil, nil
 local lastTrigger = 0
+local nextTriggerWait = 0.1
 local dbgShown = 0
 local teamSrc = "team"
+
+-- выстрел идёт штатным нажатием, а не через Tool:Activate(): Activate — это
+-- серверный вызов, по нему сразу видно, что клик не от мыши
+local VU = nil
+pcall(function() VU = game:GetService("VirtualUser") end)
+local function fireWeapon()
+    if type(mouse1click) == "function" then
+        pcall(mouse1click)
+    elseif VU then
+        pcall(function()
+            VU:CaptureController()
+            VU:ClickButton1(Vector2.new())
+        end)
+    end
+end
 
 -- ===== TEAM =====
 local TeamReg, regAt = nil, 0
@@ -157,6 +183,21 @@ local function vis(container, part)
 end
 
 -- ===== AIMBOT =====
+-- ===== НАВЕДЕНИЕ: через движение мыши, а не через запись камеры =====
+-- Прямая запись Camera.CFrame — первый признак, по которому палит любой
+-- вменяемый античит: камера поворачивается, а UserInputService:GetMouseDelta()
+-- остаётся нулём. Живой игрок так не может, у него поворот всегда идёт от мыши.
+-- Поэтому тянем саму мышь через mousemoverel — камеру крутит движок, игра видит
+-- обычный ввод. mousemoverel есть не везде, поэтому есть откат на запись камеры.
+local hasMouseMoveRel = type(mousemoverel) == "function"
+local hasMouseMoveAbs = (not hasMouseMoveRel) and type(mousemoveabs) == "function"
+local mouseRel = hasMouseMoveRel and mousemoverel or nil
+local mouseAbs = hasMouseMoveAbs and mousemoveabs or nil
+
+local aimGain = 1      -- подстраивается под чувствительность игры
+local lockWho, lockAt = nil, 0
+local prevErr = nil
+
 local function aimActive()
     if not State.aimbot then return false end
     if State.aim_hold then return aiming or rmbDown end
@@ -199,24 +240,88 @@ local function searchTarget()
     end
 end
 
-local function aimFrame()
-    if not aimActive() then return end
-    local pt = cachedPart
-    if pt and pt.Parent then
-        local k = math.clamp(State.aim_smooth / 100, 0.01, 1)
+local function aimStep(pt)
+    local sp, on = Camera:WorldToViewportPoint(pt.Position)
+    if not on then return 0 end
+    local center = Camera.ViewportSize / 2
+    local dx, dy = sp.X - center.X, sp.Y - center.Y
+    local err = math.sqrt(dx * dx + dy * dy)
+    if err < 0.6 then return err end
+
+    -- кривая подлёта
+    local k = math.clamp(State.aim_smooth / 100, 0.01, 1)
+    if State.aim_curve == "EaseOut" then
+        k = 1 - (1 - k) * (1 - k)
+    elseif State.aim_curve == "EaseInOut" then
+        k = k * k * (3 - 2 * k)
+    end
+
+    -- потолок скорости: не больше aim_maxstep пикселей за кадр. Это главная
+    -- ручка легитности — рывок на весь экран за один кадр виден сразу.
+    local want = err * k
+    if State.aim_maxstep > 0 and want > State.aim_maxstep then
+        k = State.aim_maxstep / err
+    end
+
+    local mx, my = dx * k, dy * k
+
+    -- разброс: живая рука не попадает пиксель в пиксель
+    if State.aim_jitter > 0 then
+        mx = mx + (math.random() * 2 - 1) * State.aim_jitter
+        my = my + (math.random() * 2 - 1) * State.aim_jitter
+    end
+
+    if mouseRel or mouseAbs then
+        -- чувствительность у игры своя, вслепую не угадать: подстраиваем
+        -- усилитель по тому, приблизился ли прицел к цели после прошлого шага
+        if prevErr then
+            if err > prevErr then
+                aimGain = math.max(0.15, aimGain * 0.6)      -- перелетели
+            elseif err < prevErr * 0.6 then
+                aimGain = math.min(4, aimGain * 1.08)        -- слишком вяло
+            end
+        end
+        prevErr = err
+        local gx, gy = mx * aimGain, my * aimGain
+        if mouseRel then
+            pcall(mouseRel, gx, gy)
+        else
+            pcall(mouseAbs, gx, gy)
+        end
+    else
         Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, pt.Position), k)
-        if State.triggerbot then
-            local sp, on = Camera:WorldToViewportPoint(pt.Position)
-            if on then
-                local center = Camera.ViewportSize / 2
-                if (Vector2.new(sp.X, sp.Y) - center).Magnitude <= State.trigger_dist then
-                    local now = os.clock()
-                    -- задержка задаётся в миллисекундах, в сравнении нужны секунды
-                    if now - lastTrigger > State.trigger_delay / 1000 then
-                        lastTrigger = now
-                        pcall(function() mouse1click() end)
-                    end
-                end
+    end
+    return err
+end
+
+local function aimFrame()
+    if not aimActive() then
+        lockWho, prevErr = nil, nil
+        return
+    end
+    local pt = cachedPart
+    if not (pt and pt.Parent) then
+        lockWho, prevErr = nil, nil
+        return
+    end
+
+    -- реакция: на новую цель тянемся не в тот же кадр, а через паузу
+    if lockWho ~= cachedPlr then
+        lockWho, lockAt, prevErr = cachedPlr, os.clock(), nil
+        return
+    end
+    if State.aim_reaction > 0 and (os.clock() - lockAt) * 1000 < State.aim_reaction then return end
+
+    local err = aimStep(pt)
+
+    if State.triggerbot and err and err <= State.trigger_dist then
+        local now = os.clock()
+        -- задержка не фиксированная: ровный интервал между выстрелами — тоже признак
+        if now - lastTrigger >= nextTriggerWait then
+            lastTrigger = now
+            nextTriggerWait = math.random(State.trigger_ms_min, State.trigger_ms_max) / 1000
+            if math.random(100) <= State.trigger_chance then
+                fireWeapon()
             end
         end
     end
@@ -1130,7 +1235,7 @@ local UI = StyleA.new({
     state    = State,
     title    = "PISTOL ARENA",
     subtitle = "pistol arena",
-    version  = "v1",
+    version  = "v2.0",
 })
 
 -- живой статус из тика ниже (бывший status.Text)
@@ -1147,10 +1252,18 @@ tabCombat:Slider("Плавность (меньше = плавнее)", "aim_smoo
 tabCombat:Slider("Макс. дистанция аима", "aim_maxdist", 300, 3000)
 tabCombat:Cycle("Аим-часть: Голова / Торс", "aim_part", { "Head", "HumanoidRootPart" })
 tabCombat:Keybind("Клавиша аима", "aim_key")
+tabCombat:Section("Человечность — против античита")
+tabCombat:Cycle("Кривая доводки", "aim_curve", { "EaseOut", "Linear", "EaseInOut" })
+tabCombat:Slider("Потолок поворота (px/кадр)", "aim_maxstep", 0, 30)
+tabCombat:Slider("Реакция (мс)", "aim_reaction", 0, 400)
+tabCombat:Slider("Разброс (px)", "aim_jitter", 0, 5)
+tabCombat:Info("Наведение идёт движением мыши — камера не переписывается.")
 tabCombat:Section("Стрельба")
 tabCombat:Toggle("Триггербот", "triggerbot", false)
-tabCombat:Slider("Радиус триггера (px)", "trigger_dist", 4, 40)
-tabCombat:Slider("Задержка триггера (мс)", "trigger_delay", 50, 500)
+tabCombat:Slider("Радиус (px)", "trigger_dist", 4, 40)
+tabCombat:Slider("Пауза мин (мс)", "trigger_ms_min", 20, 400)
+tabCombat:Slider("Пауза макс (мс)", "trigger_ms_max", 20, 600)
+tabCombat:Slider("Шанс выстрела (%)", "trigger_chance", 40, 100)
 tabCombat:Section("Команда")
 tabCombat:Toggle("Проверка команды", "team_check", true)
 tabCombat:Info("Своих не целим. Источник стороны: Team, контейнеры, GC-реестр.")
@@ -1243,10 +1356,10 @@ RunService.Heartbeat:Connect(function(dt)
             UI.blur.Enabled = State.ui_blur
         end
         UI:Banner(State.ui_stats
-            and ("PA v1 · " .. dbgShown .. " в кадре · src " .. teamSrc)
+            and ("PA v2.0 · " .. dbgShown .. " в кадре · src " .. teamSrc)
             or "PISTOL ARENA")
     end
 end)
 
-UI:Toast("JakoScripts PISTOL ARENA v1 загружен", "ok")
-print("[JakoScripts PISTOL ARENA v1 · Style A] loaded")
+UI:Toast("JakoScripts PISTOL ARENA v2.0 загружен", "ok")
+print("[JakoScripts PISTOL ARENA v2.0 · Style A] loaded")
