@@ -1,7 +1,20 @@
--- JakoScripts DEAGLE DUELS v2 | Luau | Roblox Deagle Duels | VANTA Style A
+-- JakoScripts DEAGLE DUELS v3 | Luau | Roblox Deagle Duels | VANTA Style A
 -- Сайлент-аим через __namecall (камера не двигается) + запасной камерный лок,
 -- авто-стрельба, ESP-оверлей, FOV-круг, хит-шанс. UI: Style A — окно 480x360, сайдбар 150, RightShift скрыть.
--- ЧЕСТНО: namecall-хуки палятся хорошими античитами. Только альт.
+--
+-- v3 — про то, ПОЧЕМУ v2 ловил бан. Разбор подписи:
+--   1. хук v2 переписывал КАЖДЫЙ Workspace:Raycast, пока цель в кэше, — включая
+--      воллчек самой игры, движение и траекторию пули. Теперь флаг armed съедается
+--      ровно одним рейкастом на выстрел.
+--   2. доводка была без ограничения угла: сервер получал попадание в цель, к которой
+--      камера клиента ни разу не поворачивалась. Теперь луч доворачивается только
+--      внутри max_angle от реального взгляда — выстрел физически объясним фликером.
+--   3. фиксированный кулдаун 0.12 и выстрел в первом же кадре захвата. Теперь человек-
+--      ская реакция, случайный кулдаун, сознательные промахи и доля хедшотов ниже 100%.
+--   4. анлоад не возвращал оригинальный __namecall — хук оставался в игре навсегда.
+--      Теперь uninstallHook() ставит метаметод обратно.
+-- ЧЕСТНО: любой namecall-хук детектируется сканом метаметода. Это снижает подпись,
+-- а не делает тебя невидимым. Дефолты консервативные — не задирай без нужды.
 -- Запуск: loadstring(game:HttpGet("RAW_URL"))()
 
 local Players = game:GetService("Players")
@@ -29,15 +42,23 @@ local State = {
     fov_show = true,
     fov = 150,
     range = 500,
-    delay = 0.12,         -- кулдаун выстрелов
     smooth = 35,          -- плавность камерного лока
     aim_part = "Head",
     team_check = true,
     antiafk = true,
+
+    -- ==== v3: то, что делает серию выстрелов человеческой ====
+    max_angle    = 22,    -- ° максимальный доворот луча от реального взгляда камеры
+    reaction_min = 0.14,  -- s цель держится в поле зрения до первого выстрела
+    reaction_max = 0.34,
+    delay_min    = 0.22,  -- s кулдаун между выстрелами, случайный в диапазоне
+    delay_max    = 0.46,
+    head_ratio   = 65,    -- % выстрелов в голову, остальные в торс
+    skip_chance  = 8,     -- % выстрелов, которые сознательно пропускаются
 }
 
-local silentTarget, silentDist = nil, 0
-local lastShot = 0
+local silentTarget, silentChar, silentDist = nil, nil, 0
+local lastShot, lastShotGap, skipUntil, targetSince = 0, 0, 0, 0
 local shotCount = 0
 local teamSrc = "team"
 
@@ -123,11 +144,12 @@ end
 
 -- ===== TARGET SELECT (медленный цикл, хук только читает кэш) =====
 local function selectTarget()
-    silentTarget, silentDist = nil, 0
+    local prev = silentChar
+    silentTarget, silentChar, silentDist = nil, nil, 0
     local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart", true)
     if not myHrp then return end
     local center = Camera.ViewportSize / 2
-    local best, bestD = nil, State.fov
+    local best, bestD, bestCh = nil, State.fov, nil
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and isEnemy(p) then
             local ch = p.Character
@@ -138,7 +160,7 @@ local function selectTarget()
                     if on then
                         local dd = (Vector2.new(sp.X, sp.Y) - center).Magnitude
                         if dd <= bestD and visible(ch, part) then
-                            best, bestD = part, dd
+                            best, bestD, bestCh = part, dd, ch
                         end
                     end
                 end
@@ -147,54 +169,123 @@ local function selectTarget()
     end
     if best then
         silentTarget = best
+        silentChar = bestCh
         silentDist = (myHrp.Position - best.Position).Magnitude
     end
+    -- смена цели сбрасывает таймер реакции: новая цель обязана «проявиться» заново
+    if silentChar ~= prev then targetSince = os.clock() end
 end
 
--- ===== SILENT AIM (правильный namecall-хук) =====
+-- ===== SILENT AIM =====
+-- armed взводится autoShoot ровно перед Activate и съедается первым же Raycast.
+-- Так подменяется один рейкаст на выстрел, а не весь трафик игры.
 local hookOK = false
+local originalNamecall = nil
+local armed, armedTarget = false, nil
+
 local function installHook()
     if hookOK then return true end
     if type(hookmetamethod) ~= "function" or type(getnamecallmethod) ~= "function" then
         return false
     end
-    local ok, err = pcall(function()
+    local ok = pcall(function()
         local old = nil
         old = hookmetamethod(game, "__namecall", function(self, ...)
-            local method = getnamecallmethod()
-            if State.silent and State.method == "namecall" and method == "Raycast" and self == Workspace then
-                local t = silentTarget
+            if armed and State.silent and State.method == "namecall"
+                and getnamecallmethod() == "Raycast" and self == Workspace then
+                armed = false -- одноразовый флаг, гасим до любых return
+                local t = armedTarget
                 if t and t.Parent then
                     local args = { ... }
                     if typeof(args[1]) == "Vector3" and typeof(args[2]) == "Vector3" and args[2].Magnitude > 1 then
                         local origin = args[1]
-                        args[2] = (t.Position - origin).Unit * args[2].Magnitude -- сохраняем длину
-                        return old(self, table.unpack(args))
+                        -- Луч выстрела начинается у ствола рядом с камерой. Рейкасты игры
+                        -- (движение, свой воллчек, траектория) идут откуда угодно — их не трогаем.
+                        if (origin - Camera.CFrame.Position).Magnitude <= 12 then
+                            local toT = t.Position - origin
+                            if toT.Magnitude > 0.01 then
+                                -- Угол между реальным взглядом камеры и целью. Внутри допуска —
+                                -- доворачиваем, снаружи — стреляем как стрелялось (промах).
+                                local ang = math.deg(math.acos(math.clamp(Camera.CFrame.LookVector:Dot(toT.Unit), -1, 1)))
+                                if ang <= State.max_angle then
+                                    args[2] = toT.Unit * args[2].Magnitude -- длина луча сохраняется
+                                    return old(self, table.unpack(args))
+                                end
+                            end
+                        end
                     end
                 end
             end
             return old(self, ...)
         end)
+        originalNamecall = old
     end)
     hookOK = ok
     return ok
 end
 
+-- v2 оставлял хук в игре после выгрузки: ломает рейкасты и палится сканом метаметода
+local function uninstallHook()
+    if not hookOK then return end
+    armed = false
+    if type(hookmetamethod) == "function" and originalNamecall ~= nil then
+        pcall(function() hookmetamethod(game, "__namecall", originalNamecall) end)
+    end
+    hookOK = false
+end
+
 -- ===== AUTO SHOOT =====
+local function pickShotPart()
+    local ch = silentChar
+    if not ch then return nil end
+    if math.random(1, 100) <= State.head_ratio then
+        local h = ch:FindFirstChild("Head", true)
+        if h then return h end
+    end
+    return ch:FindFirstChild("UpperTorso", true)
+        or ch:FindFirstChild("HumanoidRootPart", true)
+        or ch:FindFirstChild("Head", true)
+end
+
 local function autoShoot()
     if not State.autoshoot then return end
-    local now = os.clock()
-    if now - lastShot < State.delay then return end
     local t = silentTarget
-    if not t or not t.Parent then return end
-    if State.hitchance < 100 and math.random(0, 100) > State.hitchance then return end
+    if not t or not t.Parent or not silentChar then return end
+    local now = os.clock()
+
+    -- реакция: цель должна удерживаться в поле зрения, а не умирать в кадре захвата
+    local rmin, rmax = State.reaction_min, State.reaction_max
+    if rmax < rmin then rmax = rmin end
+    if now - targetSince < rmin + math.random() * (rmax - rmin) then return end
+
+    if now < skipUntil then return end
+    if now - lastShot < lastShotGap then return end
+    if State.hitchance < 100 and math.random(1, 100) > State.hitchance then return end
+
+    -- серия без единого промаха — тоже подпись
+    if math.random(1, 100) <= State.skip_chance then
+        skipUntil = now + 0.15 + math.random() * 0.25
+        return
+    end
+
     local ch = LocalPlayer.Character
     local tool = ch and ch:FindFirstChildOfClass("Tool")
-    if tool then
-        lastShot = now
-        shotCount += 1
-        pcall(function() tool:Activate() end)
-    end
+    if not tool then return end
+
+    local part = pickShotPart()
+    if not part then return end
+
+    lastShot = now
+    local dmin, dmax = State.delay_min, State.delay_max
+    if dmax < dmin then dmax = dmin end
+    lastShotGap = dmin + math.random() * (dmax - dmin) -- кулдаун не константа
+
+    armedTarget = part
+    armed = true
+    shotCount += 1
+    pcall(function() tool:Activate() end)
+    -- страховка: если игра не сделала Raycast, флаг не должен висеть до следующего выстрела
+    task.delay(0.12, function() armed = false end)
 end
 
 -- ===== CAMERA LOCK (запасной режим) =====
@@ -1022,7 +1113,7 @@ local UI = StyleA.new({
     state    = State,
     title    = "DEAGLE DUELS",
     subtitle = "deagle duels",
-    version  = "v2",
+    version  = "v3",
 })
 
 local setStat = UI:Stat("цель: — | выстрелов: 0")
@@ -1043,7 +1134,14 @@ end)
 tabCombat:Section("стрельба")
 tabCombat:Toggle("Авто-стрельба", "autoshoot", true)
 tabCombat:Slider("Хит-шанс %", "hitchance", 50, 100, "%")
-tabCombat:Slider("Кулдаун выстрела", "delay", 0.05, 0.5, "s")
+tabCombat:Section("легитность")
+tabCombat:Slider("Макс. угол доводки", "max_angle", 5, 60, "°")
+tabCombat:Slider("Реакция мин", "reaction_min", 0.05, 0.6, "s")
+tabCombat:Slider("Реакция макс", "reaction_max", 0.05, 1, "s")
+tabCombat:Slider("Кулдаун мин", "delay_min", 0.05, 1, "s")
+tabCombat:Slider("Кулдаун макс", "delay_max", 0.05, 1.5, "s")
+tabCombat:Slider("В голову %", "head_ratio", 0, 100, "%")
+tabCombat:Slider("Сознательный пропуск %", "skip_chance", 0, 40, "%")
 tabCombat:Section("фильтры")
 tabCombat:Toggle("Проверка команды", "team_check", true)
 
@@ -1074,6 +1172,7 @@ tabConfig:Button("Unload JakoScripts", "ghost", function()
     State.autoshoot = false
     State.esp = false
     State.camlock = false
+    uninstallHook()   -- вернуть оригинальный __namecall, иначе хук живёт до перезахода
     UI:Destroy()
     if fovCircle then pcall(function() fovCircle:Remove() end) end
     for p, it in pairs(items) do
@@ -1083,7 +1182,7 @@ tabConfig:Button("Unload JakoScripts", "ghost", function()
         items[p] = nil
     end
 end)
-tabConfig:Info("Сайлент-аим через __namecall: подменяется цель Raycast, камера стоит; запасной режим — камерный лок.")
+tabConfig:Info("Сайлент-аим через __namecall: подменяется ОДИН Raycast на выстрел и только внутри угла доводки; камера стоит. Запасной режим — камерный лок. Дефолты v3 рассчитаны на то, чтобы сервер не увидел невозможный выстрел.")
 
 -- ===== ANTI-AFK =====
 local afkConn = nil
@@ -1122,7 +1221,8 @@ RunService.Heartbeat:Connect(function(dt)
     if tStat >= 0.5 then
         tStat = 0
         local tn = silentTarget and silentTarget.Parent and silentTarget.Parent.Name or "—"
-        setStat("цель: " .. tostring(tn) .. " [" .. math.floor(silentDist + 0.5) .. "m] | выстрелов: " .. shotCount .. " | " .. State.method)
+        setStat("цель: " .. tostring(tn) .. " [" .. math.floor(silentDist + 0.5) .. "m] | выстрелов: " .. shotCount
+            .. " | " .. State.method .. " | углы ≤" .. State.max_angle .. "° | хук: " .. (hookOK and "on" or "off"))
     end
 end)
 
