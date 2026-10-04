@@ -10,6 +10,11 @@ __pycache__/
 *.log
 *_obf.lua
 
+# локальный стенд прогона (fengari) — не в репозиторий
+node_modules/
+package.json
+package-lock.json
+
 # локальные входы с токеном — в репозиторий не попадают
 JakoScripts_lostfront_bootstrap.lua
 JakoScripts_lostfront_oneline.txt
@@ -18,3 +23,7 @@ _gist_raw.txt
 _qold_token.txt
 UniversalFPS_oneline.txt
 vanta_pistol_link.txt
+
+# сторонний проект, к скриптам не относится
+school-day-survey/
+school-survey.zip

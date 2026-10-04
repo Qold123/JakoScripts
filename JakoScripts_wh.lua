@@ -601,7 +601,7 @@ local StyleA = (function()
     local CONFIG = {
         theme    = "VantaViolet",
         brand    = "JakoScripts",
-        mark     = "JAKO",
+        mark     = "VANTA",
         wordmark = "SCRIPTS",
         font     = "Inter",
         blur     = 28,
@@ -653,8 +653,21 @@ local StyleA = (function()
         if not TweenService then for k, v in pairs(props) do pcall(function() i[k] = v end) end return end
         TweenService:Create(i, TweenInfo.new(t or 0.18, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), props):Play()
     end
+    -- Разрядка по буквам. Идём по код-пойнтам, а не по байтам: тире в "— VANTA"
+    -- трёхбайтовое, побайтовый разбор разваливал его на три мусорных знака.
     local function tracked(s)
         local o = {}
+        if utf8 and utf8.len and utf8.offset then
+            local n = utf8.len(s)
+            if n then
+                for i = 1, n do
+                    local from = utf8.offset(s, i)
+                    local to = utf8.offset(s, i + 1)
+                    o[#o + 1] = string.sub(s, from, (to or (#s + 1)) - 1)
+                end
+                return table.concat(o, " ")
+            end
+        end
         for i = 1, #s do o[#o + 1] = string.sub(s, i, i) end
         return table.concat(o, " ")
     end
@@ -970,7 +983,7 @@ local StyleA = (function()
         wm.BorderSizePixel = 0 wm.Size = UDim2.new(0, 200, 0, 26)
         wm.Position = UDim2.new(0, 16, 0, 16) wm.ZIndex = 20 wm.Parent = gui
         corner(wm, 10) stroke(wm, P.white, 1, A.row_line)
-        local wmMark = label(wm, tracked("— JAKO"), 10, P.text, "med")
+        local wmMark = label(wm, tracked("— " .. CONFIG.mark), 10, P.text, "med")
         wmMark.Size = UDim2.new(0, 70, 1, 0) wmMark.Position = UDim2.new(0, 12, 0, 0) wmMark.ZIndex = 21
         local wmWord = label(wm, "SCRIPTS", 10, P.icon, "semi")
         wmWord.Size = UDim2.new(0, 48, 1, 0) wmWord.Position = UDim2.new(0, 80, 0, 0) wmWord.ZIndex = 21

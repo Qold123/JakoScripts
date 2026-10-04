@@ -293,7 +293,7 @@ def render(spec, out_path):
     d.rounded_rectangle([x, y, x + SIDE, y + WIN_H], radius=16 * S, fill=(255, 255, 255, int(W6 * 255)))
     d.rectangle([x + SIDE - 16 * S, y + 16 * S, x + SIDE, y + WIN_H - 16 * S], fill=(255, 255, 255, int(W6 * 255)))
     d.rectangle([x + SIDE, y + 12 * S, x + SIDE + S - 1, y + WIN_H - 12 * S], fill=(255, 255, 255, int(A_ROWLINE * 255)))
-    tracked_text(d, (x + 16 * S, y + 14 * S), "— JAKO", F_LOGO, TEXT, 3 * S)
+    tracked_text(d, (x + 16 * S, y + 14 * S), "— VANTA", F_LOGO, TEXT, 3 * S)
     tracked_text(d, (x + 16 * S, y + 38 * S), "SCRIPTS", F_SUB, ICON, 3 * S)
     d.text((x + 16 * S, y + 56 * S), (spec["subtitle"] or spec["title"]).upper()[:20], font=F_SUB, fill=DIM)
 
@@ -337,7 +337,7 @@ def render(spec, out_path):
     wd.rounded_rectangle([wmx, wmy, wmx + WM_W, wmy + WM_H], radius=10 * S,
                          fill=(255, 255, 255, int(W8 * 255)),
                          outline=(255, 255, 255, int(A_ROWLINE * 255)), width=max(1, S))
-    end = tracked_text(wd, (wmx + 12 * S, wmy + 7 * S), "— JAKO", F_WM, TEXT, 2 * S)
+    end = tracked_text(wd, (wmx + 12 * S, wmy + 7 * S), "— VANTA", F_WM, TEXT, 2 * S)
     wd.text((end + 8 * S, wmy + 7 * S), "SCRIPTS", font=F_WM2, fill=ICON)
     tw = wd.textlength(spec["title"], font=F_SUB)
     wd.text((wmx + WM_W - 12 * S - tw, wmy + 8 * S), spec["title"], font=F_SUB, fill=MUTED)
