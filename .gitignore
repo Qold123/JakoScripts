@@ -13,3 +13,4 @@ __pycache__/
 # локальные входы с токеном — в репозиторий не попадают
 JakoScripts_lostfront_bootstrap.lua
 JakoScripts_lostfront_oneline.txt
+JakoScripts_pistol_oneline.txt
