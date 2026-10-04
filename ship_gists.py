@@ -29,6 +29,7 @@ TARGETS = {
     "fpv":        ("JakoScripts_fpv_esp.lua",    "61316c34897c57a840d0e1bdd24724ef", "vanta_fpv_esp.lua",      "vanta_fpv_esp_obf.lua",      "FPV ESP v2"),
     "hitbox":     ("JakoScripts_hitbox.lua",     "61e8e91041a490a3e8f258cfbbcc51c7", "vanta_hitbox.lua",       "vanta_hitbox_obf.lua",       "Hitbox v2.1"),
     "wh":         ("JakoScripts_wh.lua",         "455138e3d75b17f9610507f66b7594aa", "vanta_wh.lua",           "vanta_wh_obf.lua",           "WH v2"),
+    "universalfps": ("jakonscripts-universal-fps.lua", "10d2e2a5c7a9bde0c1026b27fb8ad1b2", "jakon_universal_fps.lua", "jakon_universal_fps_obf.lua", "Universal FPS"),
 }
 
 
