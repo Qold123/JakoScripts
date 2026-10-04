@@ -55,6 +55,49 @@ def obf_path(plain_path, prefix):
     return f"{base}_obf.lua"
 
 
+def checker_profile(path):
+    """Собирает проблемы, которые видит структурная проверка (имена и сервисы)."""
+    r = subprocess.run([PY, "JakoScripts_check.py", path], capture_output=True, text=True)
+    out = r.stdout
+    names, services = set(), set()
+    section = None
+    for line in out.splitlines():
+        s = line.strip()
+        if s.startswith("calls to possibly undefined names:"):
+            section = "names"
+            continue
+        if s.startswith("logic uses undeclared service:"):
+            section = None
+            for part in re.findall(r"([A-Za-z_]\w*)\(", s):
+                services.add(part)
+            continue
+        if s and not s.startswith(("brackets", "blocks", "scope", "shell", "state", "service", "emoji", "lines", "  ")):
+            section = None
+        if section == "names" and s:
+            names.add(s.split()[0])
+    broken = ("MISMATCH" in out) or ("UNCLOSED" in out) or ("UNDERFLOW" in out)
+    return names, services, broken
+
+
+def verify_obf(plain, obf):
+    """Обф-сборка не должна добавлять ни одной новой проблемы к обычной."""
+    pn, ps, pbad = checker_profile(plain)
+    on, os_, obad = checker_profile(obf)
+    r = subprocess.run([PY, "obf_diff.py", plain, obf, "--assert"], capture_output=True, text=True)
+    problems = []
+    if obad or pbad:
+        problems.append("структура файла сломана")
+    new_names = sorted(on - pn)
+    new_services = sorted(os_ - ps)
+    if new_names:
+        problems.append(f"новые неопределённые имена: {new_names[:6]}")
+    if new_services:
+        problems.append(f"потеряны объявления сервисов: {new_services[:6]}")
+    if r.returncode != 0:
+        problems.append("проверка эквивалентности не прошла: " + r.stdout.strip().splitlines()[-1][:120])
+    return problems
+
+
 def build_obf(plain_path, key, force=False):
     """Light-obf the plain file (locals renamed + strings hexed + comments dropped)."""
     out = obf_path(plain_path, key)
@@ -67,6 +110,13 @@ def build_obf(plain_path, key, force=False):
                        capture_output=True, text=True)
     if r.returncode != 0:
         print(f"  obf build failed for {plain_path}: {r.stderr.strip()[:200]}")
+        return None
+    problems = verify_obf(plain_path, out)
+    if problems:
+        print(f"  obf ОТКЛОНЁН для {plain_path}:")
+        for p in problems:
+            print(f"    - {p}")
+        os.remove(out)
         return None
     return out
 
