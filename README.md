@@ -41,6 +41,7 @@ loadstring(readfile("JakoScripts.lua"))()
 | `JakoScripts.lua` | основной скрипт, 2170 строк |
 | `JakoScripts_bootstrap.lua` | короткий вход для приватного репо (токен) |
 | `JakoScripts_loader.lua` | лоадер с миррорами и локальным фолбэком |
+| `JakoScripts_silencer.lua` | глушит нативные тосты Roblox (`SetCore SendNotification`) |
 | `JakoScripts_preview.py` | генератор мокапа интерфейса |
 | `JakoScripts_style_a_preview.png` | превью дизайна, 2x |
 | `JakoScripts_check.py` | структурная проверка Luau (скобки, блоки, скоуп) |
