@@ -69,9 +69,9 @@ WANT_KINDS = ("name", "num", "string", "lstring", "interp")
 def wants_expression(tok):
     if tok is None:
         return False
-    if tok.kind != "name":
-        return True                     # a literal / string is always a value
-    return tok.value in WANT_VALUES
+    if tok.kind == "name":
+        return tok.value in WANT_VALUES or tok.value not in KEYWORDS
+    return True                         # a literal / string is always a value
 NOT_A_NAME = {"_", "nil", "true", "false"}
 # tokens an expression may continue with across a line break
 BINARY_CONT = {

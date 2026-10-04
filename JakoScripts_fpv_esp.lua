@@ -499,17 +499,21 @@ local StyleA = (function()
         blur.Enabled = true
         blur.Parent = Lighting
 
-        local parent
+        local cands = {}
         do
-            if gethui then local ok, r = pcall(gethui) if ok and r then parent = r end end
-            if not parent and get_hidden_gui then local ok, r = pcall(get_hidden_gui) if ok and r then parent = r end end
-            if not parent and get_hui then local ok, r = pcall(get_hui) if ok and r then parent = r end end
-            if not parent then parent = SVC("CoreGui") end
+            local function push(fn)
+                local ok, r = pcall(fn)
+                if ok and r then cands[#cands + 1] = r end
+            end
+            push(function() return gethui and gethui() or nil end)
+            push(function() return get_hidden_gui and get_hidden_gui() or nil end)
+            push(function() return get_hui and get_hui() or nil end)
+            push(function() return SVC("CoreGui") end)
+            push(function()
+                local plr = SVC("Players").LocalPlayer
+                return plr and plr:FindFirstChildOfClass("PlayerGui") or nil
+            end)
         end
-        pcall(function()
-            local old = parent and parent:FindFirstChild(CONFIG.brand)
-            if old then old:Destroy() end
-        end)
 
         local gui = Instance.new("ScreenGui")
         gui.Name = CONFIG.brand
@@ -517,7 +521,26 @@ local StyleA = (function()
         gui.IgnoreGuiInset = true
         gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         gui.DisplayOrder = 999
-        gui.Parent = parent
+
+        -- Крепим по очереди: gethui есть не везде, а запись в CoreGui бывает
+        -- запрещена. Раньше присваивание шло без pcall и молча роняло весь скрипт
+        -- до первой печати — снаружи это выглядело как «скрипт не работает».
+        local parent = nil
+        for _, p in ipairs(cands) do
+            if p then
+                pcall(function()
+                    local old = p:FindFirstChild(CONFIG.brand)
+                    if old and old ~= gui then old:Destroy() end
+                end)
+                local ok = pcall(function() gui.Parent = p end)
+                if ok and gui.Parent == p then parent = p break end
+            end
+        end
+        if not parent then
+            warn("[Style A] не удалось закрепить ScreenGui — UI не появится")
+            pcall(function() blur:Destroy() end)
+            return nil
+        end
 
         local WIN, SIDE, PAD = CONFIG.window, CONFIG.sidebar, CONFIG.pad
         local root = Instance.new("Frame")

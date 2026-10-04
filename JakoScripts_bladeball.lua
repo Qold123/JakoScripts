@@ -1,7 +1,19 @@
--- JakoScripts BLADE BALL v2.1 | Luau | Roblox Blade Ball | VANTA Style A
+-- JakoScripts BLADE BALL v2.2 | Luau | Roblox Blade Ball | VANTA Style A
 -- RAGE-режим: двойной цикл проверки, предсказание кручёных, паник-пари вблизи,
 -- двойной фаер, компенсация пинга. Честно: 100% нет ни у кого — сервер режет
 -- окно валидации и пинг не победить, но это потолок возможного. Бан реален.
+--
+-- v2.2 — про то, почему v2.1 «не работал» без единой ошибки в консоли:
+--   1. ремоут искался ровно по пути Remotes.ParryButtonPress. Игра его
+--      переименовала — скрипт грузился и молча ничего не делал. Теперь поиск
+--      по смыслу (parry/block/deflect/guard) + выбор вручную в Timing.
+--   2. мяч искался только в папке Balls. Теперь атрибут realBall → имя → сам
+--      Workspace → папка, по порядку надёжности.
+--   3. метка цели проверялась только как Highlight. Теперь ещё SelectionBox,
+--      «target» в именах и атрибуты.
+--   4. шелл крепил окно в непроверенный родитель без pcall и ронял весь скрипт
+--      до первой печати. Теперь перебор gethui → hidden → hui → CoreGui → PlayerGui.
+--   5. строка статуса стала диагностикой: видно, нашёлся ли ремоут и мяч.
 -- Запуск: loadstring(game:HttpGet("RAW_URL"))()
 
 local Players = game:GetService("Players")
@@ -22,12 +34,14 @@ local State = {
     ping_comp = true,     -- компенсация пинга в окно реакции
     distance = 40,        -- макс. дистанция слежки (стады)
     base_react = 0.34,    -- окно реакции на медленных мячах (сек)
-    react_scale = 0.001,  -- насколько окно сужается со скоростью мяча
+    react_scale_ui = 1,   -- отклик окна на скорость, ×1000 (1 = 0.001 с на ст/с)
     min_react = 0.12,     -- нижний предел окна (сек)
     min_interval = 0.08,  -- анти-спам между парированиями
     anti_afk = true,
     show_status = true,
     ui_toasts = true,     -- Style A: тосты шелла (Notifications в Config)
+    remote_pick = "авто",
+    scan_world = true,    -- доверять авто-поиску мяча вне папки Balls
 }
 
 local lastParry = 0
@@ -36,45 +50,176 @@ local lastInfo = "—"
 local ballSpeed, ballDist = 0, 0
 local isTargetNow = false
 
--- ===== REMOTES (лениво + ретраи, без жёсткого return) =====
-local ParryRemote, BallsFolder = nil, nil
-local function resolveRefs()
-    if not ParryRemote then
-        pcall(function()
-            local r = ReplicatedStorage:FindFirstChild("Remotes")
-            ParryRemote = r and r:FindFirstChild("ParryButtonPress")
-        end)
+-- ===== REMOTES: авто-поиск =====
+-- v2.1 искал ровно один путь (Remotes.ParryButtonPress). Если игра его
+-- переименовала — скрипт грузился, но парировать было нечем, и снаружи это
+-- выглядело как «не работает». Теперь ремоут ищется по смыслу, а не по пути,
+-- и выбор можно задать руками в Timing → «Ремоут».
+local HINTS = { "parry", "block", "deflect", "guard", "counter", "click" }
+local MAX_REMOTE_ROWS = 40
+
+local function isRemoteObj(x)
+    return x ~= nil and (x:IsA("RemoteEvent") or x:IsA("UnreliableRemoteEvent") or x:IsA("RemoteFunction"))
+end
+
+local function scoreRemote(name)
+    local low = string.lower(name)
+    for i, h in ipairs(HINTS) do
+        if low == h then return 100 - i end
+        if string.find(low, h, 1, true) then return 50 - i end
     end
-    if not BallsFolder then
-        BallsFolder = Workspace:FindFirstChild("Balls")
+    return 0
+end
+
+local RemoteList = {}      -- { {label=, obj=, score=} } по убыванию счёта
+local RemotePick = "авто"
+local ParryRemote = nil
+local remoteStatus = "нет"
+
+local function collectRemotes()
+    RemoteList = {}
+    local seen = {}
+    local function add(obj)
+        if not isRemoteObj(obj) then return end
+        local ok, full = pcall(function() return obj:GetFullName() end)
+        if not ok or not full or seen[full] then return end
+        seen[full] = true
+        RemoteList[#RemoteList + 1] = { label = full, obj = obj, score = scoreRemote(obj.Name) }
+    end
+
+    -- папка Remotes — в приоритете, но без завязки на конкретное имя
+    local r = ReplicatedStorage:FindFirstChild("Remotes")
+    if r then
+        for _, d in ipairs(r:GetDescendants()) do add(d) end
+    end
+
+    local scanned = 0
+    for _, d in ipairs(ReplicatedStorage:GetDescendants()) do
+        scanned += 1
+        if scanned > 4000 then break end
+        add(d)
+    end
+
+    table.sort(RemoteList, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        if #a.label ~= #b.label then return #a.label < #b.label end
+        return a.label < b.label
+    end)
+    while #RemoteList > MAX_REMOTE_ROWS do table.remove(RemoteList) end
+end
+
+local function resolveRemote()
+    ParryRemote = nil
+    if RemotePick ~= "авто" then
+        for _, c in ipairs(RemoteList) do
+            if c.label == RemotePick and c.obj and c.obj.Parent then
+                ParryRemote = c.obj
+                remoteStatus = c.label
+                return true
+            end
+        end
+        remoteStatus = "выбранный не найден"
+        return false
+    end
+    -- авто: лучший по имени, но не «на глаз», а по счёту
+    for _, c in ipairs(RemoteList) do
+        if c.score > 0 and c.obj and c.obj.Parent then
+            ParryRemote = c.obj
+            remoteStatus = c.label
+            return true
+        end
+    end
+    remoteStatus = "не найден"
+    return false
+end
+
+-- ===== МЯЧ: авто-поиск контейнера =====
+local BallsFolder = nil
+local ballRoots = {}
+local currentBall = nil
+
+local function collectBallRoots()
+    ballRoots = {}
+    if BallsFolder and BallsFolder.Parent then ballRoots[#ballRoots + 1] = BallsFolder end
+    local byName = Workspace:FindFirstChild("Balls")
+    if byName and byName ~= BallsFolder then
+        BallsFolder = byName
+        ballRoots[#ballRoots + 1] = byName
+    end
+    for _, d in ipairs(Workspace:GetChildren()) do
+        if d ~= Workspace.CurrentCamera and (d:IsA("Folder") or d:IsA("Model")) then
+            if string.find(string.lower(d.Name), "ball", 1, true) then
+                ballRoots[#ballRoots + 1] = d
+            end
+        end
     end
 end
-resolveRefs()
 
-local currentBall = nil
+local function partNamedBall(b)
+    return b:IsA("BasePart") and string.find(string.lower(b.Name), "ball", 1, true) ~= nil
+end
+
 local function getRealBall()
     if currentBall and currentBall.Parent then
         if currentBall:GetAttribute("realBall") ~= false then return currentBall end
+        currentBall = nil
     end
-    currentBall = nil
-    if not BallsFolder then return nil end
-    for _, b in ipairs(BallsFolder:GetChildren()) do
-        if b:IsA("BasePart") and b:GetAttribute("realBall") == true then
-            currentBall = b
-            return b
+    -- 1) атрибут realBall — самый надёжный признак
+    for _, root in ipairs(ballRoots) do
+        for _, b in ipairs(root:GetChildren()) do
+            if b:IsA("BasePart") and b:GetAttribute("realBall") == true then
+                currentBall = b
+                return b
+            end
         end
     end
-    -- фолбэк: первый BasePart-мяч
-    for _, b in ipairs(BallsFolder:GetChildren()) do
-        if b:IsA("BasePart") then currentBall = b return b end
+    -- 2) имя похоже на мяч
+    for _, root in ipairs(ballRoots) do
+        for _, b in ipairs(root:GetChildren()) do
+            if partNamedBall(b) then currentBall = b return b end
+        end
+    end
+    -- 3) мяч лежит прямо в Workspace, без папки
+    if State.scan_world then
+        for _, b in ipairs(Workspace:GetChildren()) do
+            if partNamedBall(b) then currentBall = b return b end
+        end
+    end
+    -- 4) последний шанс: папка Balls, любой BasePart
+    if BallsFolder and BallsFolder.Parent then
+        for _, b in ipairs(BallsFolder:GetChildren()) do
+            if b:IsA("BasePart") then currentBall = b return b end
+        end
     end
     return nil
 end
 
+local function resolveRefs()
+    if not BallsFolder or not BallsFolder.Parent then
+        BallsFolder = Workspace:FindFirstChild("Balls")
+    end
+    if not ParryRemote or not ParryRemote.Parent then
+        if #RemoteList == 0 then collectRemotes() end
+        resolveRemote()
+    end
+    collectBallRoots()
+end
+resolveRefs()
+
+-- Метку цели игра рисует Highlight'ом на персонаже. Если переименовали или
+-- перенесли — ищем Highlight/SelectionBox в любом слоте и «target» в именах.
+local TARGET_ATTRS = { "Targeted", "targeted", "Target", "target", "IsTarget", "isTarget", "isTargeted" }
 local function isTarget()
     local ch = LocalPlayer.Character
     if not ch then return false end
-    return ch:FindFirstChild("Highlight") ~= nil
+    for _, d in ipairs(ch:GetChildren()) do
+        if d:IsA("Highlight") or d:IsA("SelectionBox") then return true end
+        if string.find(string.lower(d.Name), "target", 1, true) then return true end
+    end
+    for _, a in ipairs(TARGET_ATTRS) do
+        if ch:GetAttribute(a) == true then return true end
+    end
+    return false
 end
 
 local function myPos()
@@ -166,7 +311,7 @@ local function parryTick()
     end
 
     local tti = dist / math.max(1, approaching)
-    local react = math.clamp(State.base_react - speed * State.react_scale, State.min_react, State.base_react)
+    local react = math.clamp(State.base_react - speed * (State.react_scale_ui / 1000), State.min_react, State.base_react)
     if State.rage then react += 0.08 end      -- шире окно = раньше жмём
     react += pingSec                            -- пинг уже съел часть окна
     if State.legit then react += math.random() * 0.03 end
@@ -350,17 +495,21 @@ local StyleA = (function()
         blur.Enabled = true
         blur.Parent = Lighting
 
-        local parent
+        local cands = {}
         do
-            if gethui then local ok, r = pcall(gethui) if ok and r then parent = r end end
-            if not parent and get_hidden_gui then local ok, r = pcall(get_hidden_gui) if ok and r then parent = r end end
-            if not parent and get_hui then local ok, r = pcall(get_hui) if ok and r then parent = r end end
-            if not parent then parent = SVC("CoreGui") end
+            local function push(fn)
+                local ok, r = pcall(fn)
+                if ok and r then cands[#cands + 1] = r end
+            end
+            push(function() return gethui and gethui() or nil end)
+            push(function() return get_hidden_gui and get_hidden_gui() or nil end)
+            push(function() return get_hui and get_hui() or nil end)
+            push(function() return SVC("CoreGui") end)
+            push(function()
+                local plr = SVC("Players").LocalPlayer
+                return plr and plr:FindFirstChildOfClass("PlayerGui") or nil
+            end)
         end
-        pcall(function()
-            local old = parent and parent:FindFirstChild(CONFIG.brand)
-            if old then old:Destroy() end
-        end)
 
         local gui = Instance.new("ScreenGui")
         gui.Name = CONFIG.brand
@@ -368,7 +517,26 @@ local StyleA = (function()
         gui.IgnoreGuiInset = true
         gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         gui.DisplayOrder = 999
-        gui.Parent = parent
+
+        -- Крепим по очереди: gethui есть не везде, а запись в CoreGui бывает
+        -- запрещена. Раньше присваивание шло без pcall и молча роняло весь скрипт
+        -- до первой печати — снаружи это выглядело как «скрипт не работает».
+        local parent = nil
+        for _, p in ipairs(cands) do
+            if p then
+                pcall(function()
+                    local old = p:FindFirstChild(CONFIG.brand)
+                    if old and old ~= gui then old:Destroy() end
+                end)
+                local ok = pcall(function() gui.Parent = p end)
+                if ok and gui.Parent == p then parent = p break end
+            end
+        end
+        if not parent then
+            warn("[Style A] не удалось закрепить ScreenGui — UI не появится")
+            pcall(function() blur:Destroy() end)
+            return nil
+        end
 
         local WIN, SIDE, PAD = CONFIG.window, CONFIG.sidebar, CONFIG.pad
         local root = Instance.new("Frame")
@@ -885,8 +1053,12 @@ local UI = StyleA.new({
     state    = State,
     title    = "BLADE BALL",
     subtitle = "blade ball",
-    version  = "v2.1",
+    version  = "v2.2",
 })
+if not UI then
+    warn("[JakoScripts BLADE BALL] UI не создан: экзекутор не дал родителя для ScreenGui")
+    return
+end
 
 -- живой статус: режим, скорость/дистанция мяча, метка цели, счётчик пари
 local setStat = UI:Stat("scan · parry 0")
@@ -911,7 +1083,31 @@ tabTiming:Section("limits")
 tabTiming:Slider("Дистанция слежки", "distance", 15, 60, nil, nil, function(v) return math.floor(v + 0.5) .. " st" end)
 tabTiming:Slider("Дистанция паники", "panic_dist", 6, 15, nil, nil, function(v) return math.floor(v + 0.5) .. " st" end)
 tabTiming:Slider("Окно реакции", "base_react", 0.15, 0.5)
+tabTiming:Slider("Минимум окна", "min_react", 0.05, 0.3)
+-- Слайдер шелла округляет до 2 знаков, а отклик живёт в тысячных (0.001 с на ст/с).
+-- Поэтому ключ хранится ×1000, а логика делит его обратно.
+tabTiming:Slider("Отклик на скорость ×1000", "react_scale_ui", 0.5, 4, nil, nil, function(v)
+    return string.format("%.2f", v)
+end)
 tabTiming:Slider("Анти-спам интервал", "min_interval", 0.05, 0.5)
+
+tabTiming:Section("источники")
+collectRemotes()
+local remoteOptions = { "авто" }
+for _, c in ipairs(RemoteList) do remoteOptions[#remoteOptions + 1] = c.label end
+tabTiming:Cycle("Ремоут парирования", "remote_pick", remoteOptions, function(v)
+    RemotePick = v
+    resolveRemote()
+    UI:Toast("Ремоут: " .. tostring(remoteStatus), ParryRemote and "ok" or "warn")
+end)
+tabTiming:Toggle("Искать мяч вне папки Balls", "scan_world", true)
+tabTiming:Button("Пересканировать игру", "ghost", function()
+    collectRemotes()
+    collectBallRoots()
+    resolveRemote()
+    UI:Toast("ремоут: " .. tostring(remoteStatus), ParryRemote and "ok" or "warn")
+end)
+tabTiming:Info("Ремоут ищется по смыслу (parry/block/deflect/guard), а не по жёсткому пути. Если авто промахнулось — выбери строку из списка. Метку цели игра рисует Highlight'ом; если её не видно — выключи «Только когда я цель» в Combat.")
 
 -- Visuals
 local tabVisuals = UI:Tab("Visuals", "eye")
@@ -962,19 +1158,24 @@ local function afkTick()
 end
 
 -- ===== STATUS =====
+-- Строка статуса — это же и диагностика: видно, нашёлся ли ремоут и мяч.
 local function statusTick()
     if not State.show_status then setStat("status off") return end
     local mode = State.rage and "RAGE" or (State.legit and "LEGIT" or "CUSTOM")
     local ball = getRealBall()
+    local bad = Color3.fromRGB(255, 120, 120)
+    local calm = Color3.fromRGB(150, 150, 165)
     if not State.enabled then
         setStat(mode .. " · off · parry " .. parryCount)
+    elseif not ParryRemote then
+        setStat(mode .. " · ремоут НЕ найден → Timing → Пересканировать", bad)
     elseif not ball then
-        setStat(mode .. " · scan · parry " .. parryCount)
+        setStat(mode .. " · ремоут ok · мяч не найден · parry " .. parryCount, bad)
     else
         setStat(string.format("%s · %d st/s · %d st · %s · %d", mode,
             math.floor(ballSpeed + 0.5), math.floor(ballDist + 0.5),
             isTargetNow and "ТЫ ЦЕЛЬ" or "ждём", parryCount),
-            isTargetNow and Color3.fromRGB(255, 150, 120) or Color3.fromRGB(150, 150, 165))
+            isTargetNow and Color3.fromRGB(255, 150, 120) or calm)
     end
 end
 

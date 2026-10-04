@@ -1,8 +1,11 @@
--- JakoScripts LOST FRONT v2.4 | Luau | Roblox Lost Front | VANTA Style A
+-- JakoScripts LOST FRONT v3.0 | Luau | Roblox Lost Front | VANTA Style A
 -- TEAM CORE по Bac0nHck: 1) GC-реестр players[].team (filtergc), 2) контейнеры
 -- персонажей (одна папка = одна команда), 3) ростер resources.teams,
 -- 4) подсветка игры, 5) ручная сторона. Дроны по атрибутам player/throttle,
 -- аим в hitbox/AimPoint. Своих не целим вообще.
+-- v3.0: silent aim (хук __namecall), скелет Drawing по Motor6D, HP-бар, линия до цели,
+-- приоритет цели и кривая наведения, триггербот со своей клавишей и радиусом,
+-- скорость/прыжок/noclip/anti-afk, конфиг на диск, FPS/ping в вотермарке.
 -- UI: Style A — окно 480x360, сайдбар 150, вкладки Combat / Visuals / Movement / Config,
 -- RightShift — скрыть окно. Уведомления — тосты шелла, StarterGui:SetCore(...) не вызывается.
 -- Запуск: loadstring(game:HttpGet("RAW_URL"))()
@@ -29,11 +32,21 @@ local State = {
     aim_predict = true,
     aim_sticky = true,
     aim_drones = true,
+    aim_priority = "Crosshair", -- Crosshair | Distance | LowHP
+    aim_ease = "Linear",        -- Linear | EaseOut | Snap
     team_check = true,
-    my_side = "AUTO", -- AUTO | attackers | defenders (кнопка в меню)
+    my_side = "AUTO", -- AUTO | attackers | defenders
+
+    -- silent aim: клиентский рейкаст уводится в хитбокс, камера не двигается
+    silent_aim = false,
+    silent_hitpart = "Head",    -- Head | Torso | Random
+    silent_fov = 160,
+    silent_walls = false,       -- false = цель обязана быть в прямой видимости
 
     triggerbot = false,
     trigger_ms = 120,
+    trigger_fov = 12,
+    trigger_key = Enum.KeyCode.F,
 
     esp = true,
     show_enemies = true,
@@ -49,6 +62,12 @@ local State = {
     tracers = false,
     fov_show = true,
     esp_boxes = false,
+    esp_hpbar = false,
+    esp_skeleton = false,
+    esp_skeleton_thick = 1,
+    esp_target_line = false,
+    fov_fill = false,
+    cam_fov = 70,
 
     hitbox = false,
     hitbox_size = 4,
@@ -57,13 +76,34 @@ local State = {
 
     wallclimb = false,
     wallclimb_speed = 28,
+    speed_on = false,
+    speed_val = 32,
+    jump_on = false,
+    jump_val = 60,
+    inf_jump = false,
+    noclip = false,
+    anti_afk = false,
+
+    ui_watermark = true,
+    ui_blur = true,
+    ui_stats = true,
+    ui_toasts = true,
+    ui_key = Enum.KeyCode.RightShift,
 }
+
+-- снимок дефолтов: кнопка Config → Сброс возвращает ровно это состояние
+local StateDefaults = {}
+for k, v in pairs(State) do StateDefaults[k] = v end
 
 local aiming = false
 local rmbDown = false
 local spaceHeld = false
+local triggerHeld = false
 local stickyTarget = nil
 local teamSrc = "?" -- какой источник сейчас работает: roster | hilite | manual | ?
+-- true = идёт наш собственный рейкаст: хук silent aim его не трогает (иначе воллчек
+-- проверял бы цель рейкастом, который сам же в неё и развёрнут)
+local silentGuard = false
 
 -- ===== ЧАСТИ ТЕЛА (риг вложенный — ищем рекурсивно) =====
 local function findHead(char) return char and char:FindFirstChild("Head", true) or nil end
@@ -274,7 +314,9 @@ local function isVisible(container, part)
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     rayParams.FilterDescendantsInstances = exclusions
     local origin = Camera.CFrame.Position
+    silentGuard = true
     local res = Workspace:Raycast(origin, part.Position - origin, rayParams)
+    silentGuard = false
     if res == nil then return true end
     if container and res.Instance:IsDescendantOf(container) then return true end
     return false
@@ -337,6 +379,9 @@ local function isDroneModel(m)
 end
 
 -- точка аима дрона: хитбокс -> AimPoint -> корень (как у Bac0nHck)
+-- droneRoot объявлен ниже: без форвард-декларации вызов уходил в глобал (nil) и
+-- ронял поиск цели на любом дроне без hitbox/AimPoint.
+local droneRoot
 local function droneAimPart(m)
     local hb = m:FindFirstChild("hitbox")
     if hb and hb:IsA("BasePart") then return hb end
@@ -367,7 +412,9 @@ local function droneEnemy(m)
     return true
 end
 
-local function droneRoot(m)
+-- присваивание в уже объявленный local (не `local function` — иначе новая переменная
+-- затеняет форвард-декларацию, и droneAimPart продолжает видеть nil)
+function droneRoot(m)
     if not m or not m.Parent then return nil end
     local ok, pp = pcall(function() return m.PrimaryPart end)
     if ok and pp and pp:IsA("BasePart") then return pp end
@@ -495,6 +542,233 @@ end
 -- объявляются здесь и получают реализацию сразу после создания этих таблиц.
 local invalidateFilters = function() end
 local teardownESP = function() end
+-- перерисовка всех строк меню из State: нужна после загрузки/сброса конфига
+local refreshRows = function() end
+
+-- ===== V3.0: ПРОИЗВОДИТЕЛЬНОСТЬ / ТЕЛЕМЕТРИЯ =====
+-- fps считается по кадрам за окно 0.5с, ping тянется из Stats (у части экзекуторов
+-- Stats.Network недоступен — тогда держим последнее значение).
+local perf = { fps = 0, ping = 0, frames = 0, acc = 0 }
+RunService.RenderStepped:Connect(function(dt)
+    perf.frames += 1
+    perf.acc += dt
+    if perf.acc >= 0.5 then
+        perf.fps = math.floor(perf.frames / perf.acc + 0.5)
+        perf.frames, perf.acc = 0, 0
+    end
+end)
+
+local Stats = game:GetService("Stats")
+local function serverPing()
+    local ok, v = pcall(function() return Stats.Network.ServerStatsItem["Data Ping"]:GetValue() end)
+    if ok and type(v) == "number" then
+        perf.ping = math.floor(v + 0.5)
+    end
+    return perf.ping
+end
+
+-- ===== V3.0: SILENT AIM =====
+-- Перехват __namecall: клиентский рейкаст разворачивается в выбранную точку хитбокса,
+-- камера при этом не двигается — попадание считает сервер, траектория в логе остаётся
+-- ровной. Работает на играх, где выстрел считается через Workspace:Raycast /
+-- FindPartOnRay / FindPartOnRayWithIgnoreList. Там, где попадание уходит ремоутом с
+-- направлением камеры, хук не участвует — нужен перехват конкретного ремоута,
+-- имя которого своё у каждой версии игры.
+local silentPartRef = nil -- silentGuard объявлен выше, до isVisible
+do
+    local mt = getrawmetatable and getrawmetatable(game)
+    if mt and setreadonly and newcclosure and hookfunction then
+        local old = mt.__namecall
+        setreadonly(mt, false)
+        mt.__namecall = newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            if State.silent_aim and silentPartRef and not silentGuard and self == Workspace
+                and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
+                local part = silentPartRef
+                if part and part.Parent then
+                    local args = { ... }
+                    local origin
+                    if method == "Raycast" then
+                        if typeof(args[1]) == "Vector3" then origin = args[1] end
+                    elseif typeof(args[1]) == "Ray" then
+                        origin = args[1].Origin
+                    end
+                    -- уводим только рейкасты из-под своей камеры: чужие системы игры не трогаем
+                    if origin and (origin - Camera.CFrame.Position).Magnitude < 25 then
+                        local aimAt = part.Position
+                        if State.silent_hitpart == "Random" then
+                            aimAt = part.Position + Vector3.new(
+                                (math.random() - 0.5) * part.Size.X,
+                                (math.random() - 0.5) * part.Size.Y,
+                                (math.random() - 0.5) * part.Size.Z)
+                        end
+                        if method == "Raycast" then
+                            args[2] = aimAt - origin
+                        else
+                            args[1] = Ray.new(origin, (aimAt - origin).Unit * 1000)
+                        end
+                        return old(self, table.unpack(args))
+                    end
+                end
+            end
+            return old(self, ...)
+        end)
+        setreadonly(mt, true)
+    end
+end
+
+local function silentHitPart(ch)
+    if not ch then return nil end
+    if State.silent_hitpart == "Torso" then
+        return findHRP(ch) or ch:FindFirstChild("UpperTorso", true) or findHead(ch)
+    end
+    return findHead(ch) or ch:FindFirstChild("UpperTorso", true) or findHRP(ch)
+end
+
+-- выбор цели для silent aim: тот же FOV-критерий, но без движения камеры
+local function refreshSilent()
+    if not State.silent_aim then
+        silentPartRef = nil
+        return
+    end
+    local center = Camera.ViewportSize / 2
+    local best, bestD = nil, State.silent_fov
+    local all = Players:GetPlayers()
+    for i = 1, #all do
+        local p = all[i]
+        if p ~= LocalPlayer and canAim(p) then
+            local ch = p.Character
+            local pt = silentHitPart(ch)
+            if pt then
+                local pos, on = Camera:WorldToViewportPoint(pt.Position)
+                if on then
+                    local d = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                    if d <= bestD and (State.silent_walls or isVisible(ch, pt)) then
+                        best, bestD = pt, d
+                    end
+                end
+            end
+        end
+    end
+    silentPartRef = best
+end
+
+-- ===== V3.0: ХОДЬБА / ПРЫЖОК / NOCLIP =====
+local baseSpeed, baseJump = 16, 50
+do
+    local hum = findHum(LocalPlayer.Character)
+    if hum then baseSpeed, baseJump = hum.WalkSpeed, hum.JumpPower end
+end
+
+local function applyMovement()
+    local char = LocalPlayer.Character
+    local hum = findHum(char)
+    if not hum then return end
+    local wantSpeed = State.speed_on and State.speed_val or baseSpeed
+    if math.abs(hum.WalkSpeed - wantSpeed) > 0.01 then hum.WalkSpeed = wantSpeed end
+    if State.jump_on then
+        pcall(function() hum.UseJumpPower = true end)
+        if math.abs(hum.JumpPower - State.jump_val) > 0.01 then hum.JumpPower = State.jump_val end
+    elseif math.abs(hum.JumpPower - baseJump) > 0.01 then
+        hum.JumpPower = baseJump
+    end
+    if State.noclip and char then
+        for _, d in ipairs(char:GetDescendants()) do
+            if d:IsA("BasePart") and d.CanCollide then d.CanCollide = false end
+        end
+    end
+end
+
+local function applyInfJump()
+    if not State.inf_jump then return end
+    local hum = findHum(LocalPlayer.Character)
+    if not hum then return end
+    local st = hum:GetState()
+    if st == Enum.HumanoidStateType.Freefall or st == Enum.HumanoidStateType.Jumping then
+        hum:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end
+
+-- anti-afk: Roblox кикает за 20 минут простоя, Idled срабатывает до кика
+do
+    local ok, VU = pcall(function() return game:GetService("VirtualUser") end)
+    if ok and VU then
+        LocalPlayer.Idled:Connect(function()
+            if not State.anti_afk then return end
+            pcall(function()
+                VU:CaptureController()
+                VU:ClickButton2(Vector2.new())
+            end)
+        end)
+    end
+end
+
+-- ===== V3.0: КОНФИГ НА ДИСК =====
+-- Сериализатор знает три типа + EnumItem: KeyCode переживает перезапуск экзекутора.
+local CFG_PATH = "JakoScripts/lostfront.cfg"
+
+local function encodeValue(v)
+    if type(v) == "number" then return string.format("%.6g", v) end
+    if type(v) == "boolean" then return v and "true" or "false" end
+    if type(v) == "string" then return string.format("%q", v) end
+    if typeof(v) == "EnumItem" then return string.format("Enum.%s.%s", v.EnumType.Name, v.Name) end
+    return "nil"
+end
+
+local function decodeValue(s)
+    s = string.match(s, "^%s*(.-)%s*$") or s
+    if s == "true" then return true end
+    if s == "false" then return false end
+    local num = tonumber(s)
+    if num then return num end
+    local str = string.match(s, '^"(.*)"$')
+    if str then return str end
+    local et, en = string.match(s, "^Enum%.([%w_]+)%.([%w_]+)$")
+    if et and en then
+        local ok, item = pcall(function() return Enum[et][en] end)
+        if ok then return item end
+    end
+    return nil
+end
+
+local CONFIG_SKIP = { ui_key = true } -- ключ интерфейса живёт в шелле, не перезаписываем
+
+local function saveConfig()
+    if not writefile then return false, "экзекутор без writefile" end
+    local keys = {}
+    for k in pairs(State) do keys[#keys + 1] = k end
+    table.sort(keys)
+    local out = { "-- JakoScripts LOST FRONT v3.0 config" }
+    for i = 1, #keys do
+        local k = keys[i]
+        if not CONFIG_SKIP[k] then
+            out[#out + 1] = k .. "=" .. encodeValue(State[k])
+        end
+    end
+    if makefolder then pcall(makefolder, "JakoScripts") end
+    local ok = pcall(writefile, CFG_PATH, table.concat(out, "\n"))
+    return ok, ok and CFG_PATH or "запись не удалась"
+end
+
+local function loadConfig()
+    if not (readfile and isfile) then return false, "экзекутор без readfile" end
+    local exists = false
+    pcall(function() exists = isfile(CFG_PATH) end)
+    if not exists then return false, "файла нет" end
+    local ok, body = pcall(readfile, CFG_PATH)
+    if not ok or type(body) ~= "string" then return false, "чтение не удалось" end
+    local n = 0
+    for line in string.gmatch(body, "[^\r\n]+") do
+        if not string.match(line, "^%s*%-%-") then
+            local k, v = string.match(line, "^([%w_]+)%s*=%s*(.+)$")
+            if k and State[k] ~= nil and not CONFIG_SKIP[k] then
+                local val = decodeValue(v)
+                if val ~= nil then State[k] = val n += 1 end
+            end
+        end
+    end
+    return n > 0, n .. " значений"
+end
 
 -- == VANTA STYLE A SHELL — inline block, правки только в шапке ==
 local StyleA = (function()
@@ -667,17 +941,21 @@ local StyleA = (function()
         blur.Enabled = true
         blur.Parent = Lighting
 
-        local parent
+        local cands = {}
         do
-            if gethui then local ok, r = pcall(gethui) if ok and r then parent = r end end
-            if not parent and get_hidden_gui then local ok, r = pcall(get_hidden_gui) if ok and r then parent = r end end
-            if not parent and get_hui then local ok, r = pcall(get_hui) if ok and r then parent = r end end
-            if not parent then parent = SVC("CoreGui") end
+            local function push(fn)
+                local ok, r = pcall(fn)
+                if ok and r then cands[#cands + 1] = r end
+            end
+            push(function() return gethui and gethui() or nil end)
+            push(function() return get_hidden_gui and get_hidden_gui() or nil end)
+            push(function() return get_hui and get_hui() or nil end)
+            push(function() return SVC("CoreGui") end)
+            push(function()
+                local plr = SVC("Players").LocalPlayer
+                return plr and plr:FindFirstChildOfClass("PlayerGui") or nil
+            end)
         end
-        pcall(function()
-            local old = parent and parent:FindFirstChild(CONFIG.brand)
-            if old then old:Destroy() end
-        end)
 
         local gui = Instance.new("ScreenGui")
         gui.Name = CONFIG.brand
@@ -685,7 +963,26 @@ local StyleA = (function()
         gui.IgnoreGuiInset = true
         gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         gui.DisplayOrder = 999
-        gui.Parent = parent
+
+        -- Крепим по очереди: gethui есть не везде, а запись в CoreGui бывает
+        -- запрещена. Раньше присваивание шло без pcall и молча роняло весь скрипт
+        -- до первой печати — снаружи это выглядело как «скрипт не работает».
+        local parent = nil
+        for _, p in ipairs(cands) do
+            if p then
+                pcall(function()
+                    local old = p:FindFirstChild(CONFIG.brand)
+                    if old and old ~= gui then old:Destroy() end
+                end)
+                local ok = pcall(function() gui.Parent = p end)
+                if ok and gui.Parent == p then parent = p break end
+            end
+        end
+        if not parent then
+            warn("[Style A] не удалось закрепить ScreenGui — UI не появится")
+            pcall(function() blur:Destroy() end)
+            return nil
+        end
 
         local WIN, SIDE, PAD = CONFIG.window, CONFIG.sidebar, CONFIG.pad
         local root = Instance.new("Frame")
@@ -1202,7 +1499,7 @@ local UI = StyleA.new({
     state    = State,
     title    = "LOST FRONT",
     subtitle = "lost front",
-    version  = "v2.4",
+    version  = "v3.0",
 })
 
 -- живой статус из updateStatus() (бывший status.Text)
@@ -1217,18 +1514,32 @@ tabCombat:Toggle("Аим по ДРОНАМ", "aim_drones", true)
 tabCombat:Toggle("Воллчек", "aim_wallcheck", true)
 tabCombat:Toggle("Упреждение (предикт)", "aim_predict", true)
 tabCombat:Toggle("Залипание на цели", "aim_sticky", true)
+tabCombat:Cycle("Приоритет цели", "aim_priority", { "Crosshair", "Distance", "LowHP" })
+tabCombat:Cycle("Кривая наведения", "aim_ease", { "Linear", "EaseOut", "Snap" })
 tabCombat:Slider("FOV", "aim_fov", 40, 500)
 tabCombat:Slider("Плавность (больше=резче)", "aim_smooth", 1, 100)
 tabCombat:Keybind("Сменить клавишу аима", "aim_key")
 tabCombat:Cycle("Аим-часть: Голова / Торс", "aim_part", { "Head", "HumanoidRootPart" })
+
+tabCombat:Section("Silent aim — камера не двигается")
+tabCombat:Toggle("Silent aim (хук рейкаста)", "silent_aim", false)
+tabCombat:Cycle("Точка попадания", "silent_hitpart", { "Head", "Torso", "Random" })
+tabCombat:Slider("Silent FOV", "silent_fov", 40, 500)
+tabCombat:Toggle("Silent: бить через стены", "silent_walls", false)
+
 tabCombat:Section("Команда")
 tabCombat:Toggle("Проверка команды", "team_check", true)
 tabCombat:Cycle("Моя сторона: АВТО", "my_side", { "AUTO", "attackers", "defenders" }, function()
     invalidateFilters()
 end)
-tabCombat:Section("Разное")
+
+tabCombat:Section("Триггербот")
 tabCombat:Toggle("Триггербот", "triggerbot", false)
+tabCombat:Keybind("Клавиша триггера", "trigger_key")
 tabCombat:Slider("Задержка триггера (мс)", "trigger_ms", 50, 500)
+tabCombat:Slider("Радиус триггера (px)", "trigger_fov", 4, 60)
+
+tabCombat:Section("Хитбоксы")
 tabCombat:Toggle("Хитбокс игроков-врагов", "hitbox", false)
 tabCombat:Slider("Размер хитбокса", "hitbox_size", 2, 12)
 tabCombat:Toggle("Хитбокс ДРОНОВ", "drone_hitbox", false)
@@ -1243,11 +1554,20 @@ tabVisuals:Toggle("Показывать СВОИХ (обычно выкл)", "sh
 tabVisuals:Toggle("Имена", "esp_names", true)
 tabVisuals:Toggle("Дистанция", "esp_distance", true)
 tabVisuals:Toggle("Здоровье", "esp_health", true)
+tabVisuals:Toggle("HP-бар (Drawing)", "esp_hpbar", false)
 tabVisuals:Toggle("Чамсы Highlight (жрёт FPS)", "esp_chams", true)
 tabVisuals:Slider("Макс. дистанция ESP", "esp_maxdist", 150, 1500)
+tabVisuals:Section("Оверлеи")
+tabVisuals:Toggle("Скелет (Drawing)", "esp_skeleton", false)
+tabVisuals:Slider("Толщина скелета", "esp_skeleton_thick", 1, 4)
+tabVisuals:Toggle("Линия до цели", "esp_target_line", false)
 tabVisuals:Toggle("Трассеры", "tracers", false)
-tabVisuals:Toggle("FOV круг", "fov_show", true)
 tabVisuals:Toggle("2D-боксы (Drawing)", "esp_boxes", false)
+tabVisuals:Toggle("FOV круг", "fov_show", true)
+tabVisuals:Toggle("FOV заливка", "fov_fill", false)
+tabVisuals:Slider("FOV камеры", "cam_fov", 70, 120, nil, function(v)
+    if Camera then Camera.FieldOfView = v end
+end)
 tabVisuals:Section("Дроны")
 tabVisuals:Toggle("ESP ДРОНОВ", "drone_esp", true)
 tabVisuals:Toggle("Показывать СВОЙ дрон", "show_own_drone", false)
@@ -1262,28 +1582,65 @@ local tabMovement = UI:Tab("Movement", "zap")
 tabMovement:Section("Движение")
 tabMovement:Toggle("Карабканье по стенам (держи Space)", "wallclimb", false)
 tabMovement:Slider("Скорость карабканья", "wallclimb_speed", 10, 60)
+tabMovement:Toggle("Своя скорость ходьбы", "speed_on", false)
+tabMovement:Slider("Скорость", "speed_val", 16, 200)
+tabMovement:Toggle("Своя сила прыжка", "jump_on", false)
+tabMovement:Slider("Сила прыжка", "jump_val", 50, 300)
+tabMovement:Toggle("Бесконечный прыжок", "inf_jump", false)
+tabMovement:Toggle("Noclip (сквозь стены)", "noclip", false)
+tabMovement:Toggle("Anti-AFK", "anti_afk", false)
 
 -- Config
 local tabConfig = UI:Tab("Config", "settings")
 tabConfig:Section("interface")
 tabConfig:Keybind("Toggle key", "ui_key")
 tabConfig:Toggle("Notifications", "ui_toasts", true)
+tabConfig:Toggle("Watermark", "ui_watermark", true)
+tabConfig:Toggle("Watermark: FPS / ping", "ui_stats", true)
+tabConfig:Toggle("Background blur", "ui_blur", true)
+tabConfig:Section("config")
+tabConfig:Button("Сохранить настройки", nil, function()
+    local ok, info = saveConfig()
+    UI:Toast(ok and ("Сохранено: " .. tostring(info)) or ("Не сохранено: " .. tostring(info)), ok and "ok" or "warn")
+end)
+tabConfig:Button("Загрузить настройки", "ghost", function()
+    local ok, info = loadConfig()
+    refreshRows()
+    if Camera then Camera.FieldOfView = State.cam_fov end
+    if UI.blur then pcall(function() UI.blur.Enabled = State.ui_blur end) end
+    if UI.watermark then UI.watermark.Visible = State.ui_watermark end
+    UI:Toast(ok and ("Загружено: " .. tostring(info)) or ("Не загружено: " .. tostring(info)), ok and "ok" or "warn")
+end)
+tabConfig:Button("Сбросить к дефолту", "ghost", function()
+    for k, v in pairs(StateDefaults) do State[k] = v end
+    refreshRows()
+    if Camera then Camera.FieldOfView = State.cam_fov end
+    if UI.blur then pcall(function() UI.blur.Enabled = State.ui_blur end) end
+    if UI.watermark then UI.watermark.Visible = State.ui_watermark end
+    UI:Toast("Настройки сброшены", "ok")
+end)
 tabConfig:Section("session")
 tabConfig:Button("Unload JakoScripts", "ghost", function()
     UI:Destroy()
     teardownESP()
 end)
 tabConfig:Info("Сторона: GC-реестр, контейнеры, ростер, подсветка.")
+tabConfig:Info("Silent aim работает на рейкаст-играх. Если игра считает попадание ремоутом, нужен перехват этого ремоута.")
 
 -- ввод аима и карабканья — перенесён из старого GUI-блока (RightShift теперь у шелла)
 UserInputService.InputBegan:Connect(function(i, gp)
-    if gp then return end
+    if gp or UI.listening then return end -- пока идёт переназначение клавиши, ввод не трогаем
     if i.KeyCode == State.aim_key then aiming = true end
+    if i.KeyCode == State.trigger_key then triggerHeld = true end
     if i.UserInputType == Enum.UserInputType.MouseButton2 then rmbDown = true end
-    if i.KeyCode == Enum.KeyCode.Space then spaceHeld = true end
+    if i.KeyCode == Enum.KeyCode.Space then
+        spaceHeld = true
+        if State.inf_jump then applyInfJump() end
+    end
 end)
 UserInputService.InputEnded:Connect(function(i)
     if i.KeyCode == State.aim_key then aiming = false stickyTarget = nil end
+    if i.KeyCode == State.trigger_key then triggerHeld = false end
     if i.UserInputType == Enum.UserInputType.MouseButton2 then rmbDown = false end
     if i.KeyCode == Enum.KeyCode.Space then spaceHeld = false end
 end)
@@ -1291,25 +1648,146 @@ end)
 -- ===== DRAWING =====
 local hasDraw = false
 pcall(function() if Drawing then hasDraw = true end end)
-local fovC, cross = nil, nil
+local ACCENT = Color3.fromRGB(160, 140, 255)
+local fovC, cross, targetLine = nil, nil, nil
 local lines, boxes = {}, {}
+local skelCache = {} -- [player] = { char, links = { {a, b, line} }, n, next }
+local bars = {}      -- [player] = { bg, fill }
 if hasDraw then
     pcall(function()
-        fovC = Drawing.new("Circle") fovC.Thickness = 1 fovC.NumSides = 40
-        fovC.Filled = false fovC.Transparency = 0.7 fovC.Color = Color3.fromRGB(160,140,255)
+        fovC = Drawing.new("Circle") fovC.Thickness = 1 fovC.NumSides = 48
+        fovC.Filled = false fovC.Transparency = 0.7 fovC.Color = ACCENT
         cross = Drawing.new("Text") cross.Size = 16 cross.Center = true cross.Outline = true
         cross.Text = "+" cross.Color = Color3.fromRGB(255,255,255) cross.Transparency = 0.8
+        targetLine = Drawing.new("Line") targetLine.Thickness = 1
+        targetLine.Transparency = 0.45 targetLine.Color = ACCENT targetLine.Visible = false
     end)
 end
+
+local function dropSkeleton(p)
+    local e = skelCache[p]
+    if e then
+        for i = 1, #e.links do pcall(function() e.links[i].line:Remove() end) end
+        skelCache[p] = nil
+    end
+end
+
+local function dropBar(p)
+    local b = bars[p]
+    if b then
+        if b.bg then pcall(function() b.bg:Remove() end) end
+        if b.fill then pcall(function() b.fill:Remove() end) end
+        bars[p] = nil
+    end
+end
+
 local function hideDraw(p)
     local l = lines[p] if l then l.Visible = false end
     local b = boxes[p] if b then b.Visible = false end
+    local s = skelCache[p]
+    if s then for i = 1, #s.links do s.links[i].line.Visible = false end end
+    local hb = bars[p]
+    if hb then
+        if hb.bg then hb.bg.Visible = false end
+        if hb.fill then hb.fill.Visible = false end
+    end
 end
+
 Players.PlayerRemoving:Connect(function(p)
     hideDraw(p)
     local l = lines[p] if l then pcall(function() l:Remove() end) lines[p] = nil end
     local b = boxes[p] if b then pcall(function() b:Remove() end) boxes[p] = nil end
+    dropSkeleton(p)
+    dropBar(p)
 end)
+
+-- ---------- скелет: кости читаем из Motor6D, поэтому риг подходит любой ----------
+-- (R6, R15, кастомный). Список костей пересобирается раз в 0.5с, линии живут между
+-- пересборками — иначе GetDescendants в каждом кадре съедал бы fps.
+local SKELETON_RESCAN = 0.5
+
+local function rigMotors(char)
+    local out = {}
+    for _, d in ipairs(char:GetDescendants()) do
+        if d:IsA("Motor6D") then
+            local a, b = d.Part0, d.Part1
+            if a and b and a:IsA("BasePart") and b:IsA("BasePart") then
+                out[#out + 1] = { a, b }
+            end
+        end
+    end
+    return out
+end
+
+local function drawSkeleton(p, char, col)
+    local e = skelCache[p]
+    if not e or e.char ~= char then
+        dropSkeleton(p)
+        e = { char = char, links = {}, n = -1, next = 0 }
+        skelCache[p] = e
+    end
+    local now = os.clock()
+    if e.n < 0 or now >= e.next then
+        e.next = now + SKELETON_RESCAN
+        local defs = rigMotors(char)
+        if #defs ~= e.n then
+            for i = 1, #e.links do pcall(function() e.links[i].line:Remove() end) end
+            e.links = {}
+            for i = 1, #defs do
+                local ln = Drawing.new("Line")
+                ln.Transparency = 0.85
+                e.links[i] = { a = defs[i][1], b = defs[i][2], line = ln }
+            end
+            e.n = #defs
+        end
+    end
+    for i = 1, #e.links do
+        local lk = e.links[i]
+        if lk.a.Parent and lk.b.Parent then
+            local pa, oa = Camera:WorldToViewportPoint(lk.a.Position)
+            local pb, ob = Camera:WorldToViewportPoint(lk.b.Position)
+            if oa and ob and pa.Z > 0 and pb.Z > 0 then
+                lk.line.From = Vector2.new(pa.X, pa.Y)
+                lk.line.To = Vector2.new(pb.X, pb.Y)
+                lk.line.Thickness = State.esp_skeleton_thick
+                lk.line.Color = col
+                lk.line.Visible = true
+            else
+                lk.line.Visible = false
+            end
+        else
+            lk.line.Visible = false
+        end
+    end
+end
+
+local function drawHPBar(p, headPos, hp, maxhp)
+    local b = bars[p]
+    if not b then
+        b = { bg = Drawing.new("Square"), fill = Drawing.new("Square") }
+        b.bg.Filled = true b.bg.Thickness = 0
+        b.bg.Color = Color3.fromRGB(10, 10, 14) b.bg.Transparency = 0.45
+        b.fill.Filled = true b.fill.Thickness = 0
+        bars[p] = b
+    end
+    local pos, on = Camera:WorldToViewportPoint(headPos + Vector3.new(0, 2.2, 0))
+    local dist = (Camera.CFrame.Position - headPos).Magnitude
+    if not (on and pos.Z > 0 and dist < State.esp_maxdist) then
+        b.bg.Visible = false b.fill.Visible = false
+        return
+    end
+    local sc = 900 / math.max(20, dist)
+    local w = math.clamp(sc * 0.6, 24, 160)
+    local h = 4
+    local x, y = pos.X - w / 2, pos.Y
+    b.bg.Size = Vector2.new(w, h) b.bg.Position = Vector2.new(x, y) b.bg.Visible = true
+    local r = math.clamp(hp / math.max(1, maxhp), 0, 1)
+    b.fill.Size = Vector2.new(math.max(1, w * r), h)
+    b.fill.Position = Vector2.new(x, y)
+    b.fill.Color = r > 0.5 and Color3.fromRGB(140, 255, 140)
+        or (r > 0.25 and Color3.fromRGB(255, 190, 80) or Color3.fromRGB(255, 90, 90))
+    b.fill.Visible = true
+end
 
 -- ===== ESP игроков =====
 local espCache = {}
@@ -1329,19 +1807,36 @@ invalidateFilters = function()
     for p, _ in pairs(espCache) do clearESP(p) end
 end
 
+-- перерисовка строк меню из State — после загрузки/сброса конфига
+refreshRows = function()
+    for _, row in pairs(UI.rows or {}) do
+        if row and row.Refresh then pcall(row.Refresh) end
+    end
+end
+
 -- снять всё, что скрипт создал в игре (кнопка Unload JakoScripts)
 teardownESP = function()
     State.esp = false
     State.drone_esp = false
     State.aimbot = false
+    State.silent_aim = false
     State.triggerbot = false
     State.hitbox = false
     State.drone_hitbox = false
     State.wallclimb = false
+    State.noclip = false
+    State.inf_jump = false
     State.tracers = false
     State.esp_boxes = false
+    State.esp_skeleton = false
+    State.esp_hpbar = false
+    State.esp_target_line = false
     State.fov_show = false
+    State.speed_on = false
+    State.jump_on = false
+    silentPartRef = nil
     stickyTarget = nil
+    triggerHeld = false
     for p, _ in pairs(espCache) do clearESP(p) end
     for m, e in pairs(droneESP) do
         if e.hl then pcall(function() e.hl:Destroy() end) end
@@ -1351,9 +1846,18 @@ teardownESP = function()
     for _, l in pairs(lines) do pcall(function() l:Remove() end) end
     for _, b in pairs(boxes) do pcall(function() b:Remove() end) end
     lines, boxes = {}, {}
+    for p, _ in pairs(skelCache) do dropSkeleton(p) end
+    for p, _ in pairs(bars) do dropBar(p) end
     if fovC then pcall(function() fovC:Remove() end) end
     if cross then pcall(function() cross:Remove() end) end
-    fovC, cross = nil, nil
+    if targetLine then pcall(function() targetLine:Remove() end) end
+    fovC, cross, targetLine = nil, nil, nil
+    local hum = findHum(LocalPlayer.Character)
+    if hum then
+        hum.WalkSpeed = baseSpeed
+        hum.JumpPower = baseJump
+    end
+    if Camera then Camera.FieldOfView = 70 end
 end
 
 -- фильтры показа переключили в меню: старый toggle-колбэк сбрасывал цель и кэш ESP
@@ -1420,6 +1924,9 @@ local function updateESP()
     updateDroneESP(myPos)
     if not State.esp then
         for p, _ in pairs(espCache) do clearESP(p) end
+        for p, _ in pairs(lines) do hideDraw(p) end
+        for p, _ in pairs(skelCache) do hideDraw(p) end
+        for p, _ in pairs(bars) do hideDraw(p) end
         dbgEnemies, dbgAllies = 0, 0
         return
     end
@@ -1474,6 +1981,20 @@ local function updateESP()
                             b.Position = Vector2.new(pos.X - sc*0.3, pos.Y - sc/2)
                             b.Color = col b.Visible = true
                         elseif b then b.Visible = false end
+                    end
+                    if hasDraw then
+                        if State.esp_skeleton then
+                            drawSkeleton(p, char, col)
+                        else
+                            local s = skelCache[p]
+                            if s then for i = 1, #s.links do s.links[i].line.Visible = false end end
+                        end
+                        if State.esp_hpbar then
+                            local h = findHum(char)
+                            drawHPBar(p, head.Position, h and h.Health or 0, h and h.MaxHealth or 100)
+                        else
+                            dropBar(p)
+                        end
                     end
                 end
             end
@@ -1539,7 +2060,12 @@ local function searchTarget()
                     local dy = pos.Y - center.Y
                     local dd = math.sqrt(dx*dx + dy*dy)
                     if dd <= State.aim_fov then
-                        cands[#cands + 1] = { dd = dd, part = pt, who = p }
+                        local hum = findHum(ch)
+                        cands[#cands + 1] = {
+                            dd = dd, part = pt, who = p,
+                            hp = hum and hum.Health or math.huge,
+                            d3 = (Camera.CFrame.Position - pt.Position).Magnitude,
+                        }
                     end
                 end
             end
@@ -1556,7 +2082,11 @@ local function searchTarget()
                         local dy = pos.Y - center.Y
                         local dd = math.sqrt(dx*dx + dy*dy)
                         if dd <= State.aim_fov then
-                            cands[#cands + 1] = { dd = dd, part = part, who = m }
+                            cands[#cands + 1] = {
+                                dd = dd, part = part, who = m,
+                                hp = math.huge, -- у дрона нет Humanoid: в LowHP он всегда последний
+                                d3 = (Camera.CFrame.Position - part.Position).Magnitude,
+                            }
                         end
                     end
                 end
@@ -1564,7 +2094,12 @@ local function searchTarget()
         end
     end
     if #cands == 0 then return end
-    table.sort(cands, function(a, b) return a.dd < b.dd end)
+    local prio = State.aim_priority
+    table.sort(cands, function(a, b)
+        if prio == "Distance" and a.d3 ~= b.d3 then return a.d3 < b.d3 end
+        if prio == "LowHP" and a.hp ~= b.hp then return a.hp < b.hp end
+        return a.dd < b.dd
+    end)
     for i = 1, math.min(3, #cands) do
         local c = cands[i]
         local cont = nil
@@ -1583,27 +2118,60 @@ local function aimFrame()
         local vs = Camera.ViewportSize
         fovC.Position = vs/2 fovC.Radius = State.aim_fov
         fovC.Visible = State.fov_show
+        fovC.Filled = State.fov_fill
+        fovC.Transparency = State.fov_fill and 0.92 or 0.7
     end
     if cross then
         local vs = Camera.ViewportSize
         cross.Position = Vector2.new(vs.X/2, vs.Y/2 - 14) cross.Visible = true
     end
-    if not aimActive() then cachedPart = nil return end
+    if not aimActive() then
+        cachedPart = nil
+        if targetLine then targetLine.Visible = false end
+        return
+    end
     local mc = LocalPlayer.Character
     if not mc or not findHRP(mc) then return end
     local pt = cachedPart
+    if targetLine then
+        if State.esp_target_line and pt and pt.Parent then
+            local pos, on = Camera:WorldToViewportPoint(pt.Position)
+            local vs = Camera.ViewportSize
+            if on then
+                targetLine.From = Vector2.new(vs.X/2, vs.Y/2)
+                targetLine.To = Vector2.new(pos.X, pos.Y)
+                targetLine.Visible = true
+            else
+                targetLine.Visible = false
+            end
+        else
+            targetLine.Visible = false
+        end
+    end
     if pt and pt.Parent then
         local goal = predictPos(pt)
         local k = math.clamp(State.aim_smooth/100, 0.01, 1)
-        Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, goal), k)
-        if State.triggerbot then
-            local pos, on = Camera:WorldToViewportPoint(pt.Position)
-            if on and (Vector2.new(pos.X,pos.Y) - Camera.ViewportSize/2).Magnitude < 12 then
-                local now = os.clock()
-                if now - lastTrigger > State.trigger_ms/1000 then
-                    lastTrigger = now
-                    pcall(function() mouse1click() end)
-                end
+        -- кривая подлёта: Linear — ровно, EaseOut — быстро в начале и мягко у цели,
+        -- Snap — мгновенно (по сути без плавности)
+        if State.aim_ease == "EaseOut" then
+            k = 1 - (1 - k) * (1 - k)
+        elseif State.aim_ease == "Snap" then
+            k = 1
+        end
+        if k >= 1 then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, goal)
+        else
+            Camera.CFrame = Camera.CFrame:Lerp(CFrame.new(Camera.CFrame.Position, goal), k)
+        end
+    end
+    -- триггербот: отдельная клавиша, свой радиус, работает и без движения камеры
+    if State.triggerbot and pt and pt.Parent and (triggerHeld or not State.aim_hold) then
+        local pos, on = Camera:WorldToViewportPoint(pt.Position)
+        if on and (Vector2.new(pos.X,pos.Y) - Camera.ViewportSize/2).Magnitude < State.trigger_fov then
+            local now = os.clock()
+            if now - lastTrigger > State.trigger_ms/1000 then
+                lastTrigger = now
+                pcall(function() mouse1click() end)
             end
         end
     end
@@ -1625,7 +2193,9 @@ local function wallclimbTick()
     local cf = hrp.CFrame
     local dirs = { cf.LookVector, -cf.LookVector, cf.RightVector, -cf.RightVector }
     for i = 1, 4 do
+        silentGuard = true
         local res = Workspace:Raycast(origin, dirs[i] * 4, climbParams)
+        silentGuard = false
         if res and math.abs(res.Normal.Y) < 0.35 then
             local v = hrp.AssemblyLinearVelocity
             hrp.AssemblyLinearVelocity = Vector3.new(v.X * 0.25, State.wallclimb_speed, v.Z * 0.25)
@@ -1635,6 +2205,30 @@ local function wallclimbTick()
 end
 
 -- ===== HITBOX =====
+-- исходные размер / прозрачность / коллизию запоминаем на саму часть: восстановление
+-- не должно угадывать по Transparency == 0.7 — чужой скрипт мог выставить то же число.
+local hitboxOrig = setmetatable({}, { __mode = "k" })
+
+local function restorePart(part)
+    local o = hitboxOrig[part]
+    if not o then return end
+    pcall(function()
+        part.Size = o.size
+        part.Transparency = o.transparency
+        part.CanCollide = o.collide
+    end)
+    hitboxOrig[part] = nil
+end
+
+local function expandPart(part, size, transparency)
+    if not hitboxOrig[part] then
+        hitboxOrig[part] = { size = part.Size, transparency = part.Transparency, collide = part.CanCollide }
+    end
+    part.Size = Vector3.new(size, size, size)
+    part.Transparency = transparency
+    part.CanCollide = false
+end
+
 local function applyHitbox()
     local all = Players:GetPlayers()
     for i = 1, #all do
@@ -1643,12 +2237,9 @@ local function applyHitbox()
             local part = findHRP(p.Character)
             if part then
                 if State.hitbox and isEnemy(p) and isAlive(p) then
-                    part.Size = Vector3.new(State.hitbox_size, State.hitbox_size, State.hitbox_size)
-                    part.Transparency = 0.7
-                    part.CanCollide = false
-                elseif part.Transparency == 0.7 then
-                    part.Size = Vector3.new(2, 2, 1)
-                    part.Transparency = 1
+                    expandPart(part, State.hitbox_size, 0.7)
+                else
+                    restorePart(part)
                 end
             end
         end
@@ -1656,11 +2247,9 @@ local function applyHitbox()
     for m, part in pairs(droneParts) do
         if part.Parent then
             if State.drone_hitbox then
-                part.Size = Vector3.new(State.drone_hitbox_size, State.drone_hitbox_size, State.drone_hitbox_size)
-                part.Transparency = 0.5
-                part.CanCollide = false
-            elseif part.Transparency == 0.5 and part.Name ~= "HumanoidRootPart" then
-                part.Transparency = 0
+                expandPart(part, State.drone_hitbox_size, 0.5)
+            else
+                restorePart(part)
             end
         end
     end
@@ -1681,7 +2270,8 @@ end
 local function updateStatus()
     local dc = 0
     for _ in pairs(droneParts) do dc += 1 end
-    setStat("Я: " .. mySideLabel() .. " E" .. dbgEnemies .. " A" .. dbgAllies .. " D" .. dc)
+    setStat("Я: " .. mySideLabel() .. " E" .. dbgEnemies .. " A" .. dbgAllies .. " D" .. dc
+        .. (State.silent_aim and " S" or ""))
 end
 
 -- ===== LOOPS =====
@@ -1705,10 +2295,12 @@ end)
 local tAim, tEsp, tMisc, tScan, tStat, tRos = 0, 0, 0, 0, 0, 0
 RunService.Heartbeat:Connect(function(dt)
     wallclimbTick()
+    applyMovement()
     tAim += dt tEsp += dt tMisc += dt tScan += dt tStat += dt tRos += dt
     if tAim >= 0.08 then
         tAim = 0
         if aimActive() then searchTarget() end
+        refreshSilent()
     end
     if tEsp >= 0.4 then
         tEsp = 0
@@ -1729,9 +2321,24 @@ RunService.Heartbeat:Connect(function(dt)
     if tStat >= 1.0 then
         tStat = 0
         updateStatus()
+        -- шелл держит blur и вотермарку на себе: синхронизируем с State раз в секунду,
+        -- чтобы тумблеры Config не обрастали колбэками
+        if UI.watermark and UI.watermark.Visible ~= State.ui_watermark then
+            UI.watermark.Visible = State.ui_watermark
+        end
+        if UI.blur and UI.blur.Enabled ~= State.ui_blur then
+            UI.blur.Enabled = State.ui_blur
+        end
+        -- FOV камеры игра сбрасывает сама — переустанавливаем не каждый кадр, а раз в секунду
+        if Camera and math.abs(Camera.FieldOfView - State.cam_fov) > 0.5 then
+            Camera.FieldOfView = State.cam_fov
+        end
+        UI:Banner(State.ui_stats
+            and string.format("LF v3.0 · %d FPS · %d MS", perf.fps, serverPing())
+            or "LOST FRONT")
     end
 end)
 scanDrones()
 
-UI:Toast("JakoScripts LOST FRONT loaded", "ok")
-print("[JakoScripts LOST FRONT · Style A] loaded")
+UI:Toast("JakoScripts LOST FRONT v3.0 loaded", "ok")
+print("[JakoScripts LOST FRONT v3.0 · Style A] loaded")
