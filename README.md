@@ -6,43 +6,41 @@
 окно 480x360 · сайдбар 150 · Combat / Visuals / Movement / Config · RightShift
 ```
 
-## Скрипты
+## Ссылки для инжектора
 
-Каждая игра лежит в своём гисте и отдаёт два файла: обычный и light-obf сборку. Обе ссылки живые, разница только в читаемости кода.
+Репозиторий публичный, поэтому ссылка — обычный raw. Ни токена, ни заголовков.
 
-| Игра | Обычная ссылка | Обф-ссылка | Вкладки |
-|---|---|---|---|
-| Murder Mystery 2 | [vanta_mm2.lua](https://gist.githubusercontent.com/JakoScripts/d9426b0772256a4709608e96f710508d/raw/vanta_mm2.lua) | [vanta_mm2_obf.lua](https://gist.githubusercontent.com/JakoScripts/d9426b0772256a4709608e96f710508d/raw/vanta_mm2_obf.lua) | Combat · Visuals · Movement · Config |
-| Murder Mystery 2 — standalone | [vanta_mm2_standalone.lua](https://gist.githubusercontent.com/JakoScripts/2ad75acf1f3a734418594bb44d42f09e/raw/vanta_mm2_standalone.lua) | [vanta_mm2_standalone_obf.lua](https://gist.githubusercontent.com/JakoScripts/2ad75acf1f3a734418594bb44d42f09e/raw/vanta_mm2_standalone_obf.lua) | Combat · Visuals · Movement · Config |
-| The Lost Front | [vanta_lostfront.lua](https://gist.githubusercontent.com/JakoScripts/de7c068ca91e534ed54f3e64d191483f/raw/vanta_lostfront.lua) | [vanta_lostfront_obf.lua](https://gist.githubusercontent.com/JakoScripts/de7c068ca91e534ed54f3e64d191483f/raw/vanta_lostfront_obf.lua) | Combat · Visuals · Movement · Config |
-| Steal an Egg | [vanta_stealegg.lua](https://gist.githubusercontent.com/JakoScripts/5f6e4bcab0f3df2680a1944a29362b1a/raw/vanta_stealegg.lua) | [vanta_stealegg_obf.lua](https://gist.githubusercontent.com/JakoScripts/5f6e4bcab0f3df2680a1944a29362b1a/raw/vanta_stealegg_obf.lua) | Farm · Visuals · Stealth · Config |
-| Blade Ball | [vanta_bladeball.lua](https://gist.githubusercontent.com/JakoScripts/0ce0c7ccfe1655547e19253ab16138b2/raw/vanta_bladeball.lua) | [vanta_bladeball_obf.lua](https://gist.githubusercontent.com/JakoScripts/0ce0c7ccfe1655547e19253ab16138b2/raw/vanta_bladeball_obf.lua) | Combat · Timing · Visuals · Config |
-| Deagle Duels | [vanta_deagle_duels.lua](https://gist.githubusercontent.com/JakoScripts/f037386d8aac2c924d78bee6157c3f66/raw/vanta_deagle_duels.lua) | [vanta_deagle_duels_obf.lua](https://gist.githubusercontent.com/JakoScripts/f037386d8aac2c924d78bee6157c3f66/raw/vanta_deagle_duels_obf.lua) | Combat · Visuals · Misc · Config |
-| FPV Drone Game | [vanta_fpv_esp.lua](https://gist.githubusercontent.com/JakoScripts/61316c34897c57a840d0e1bdd24724ef/raw/vanta_fpv_esp.lua) | [vanta_fpv_esp_obf.lua](https://gist.githubusercontent.com/JakoScripts/61316c34897c57a840d0e1bdd24724ef/raw/vanta_fpv_esp_obf.lua) | Visuals · Drones · Config |
-| generic FPS | [vanta_hitbox.lua](https://gist.githubusercontent.com/JakoScripts/61e8e91041a490a3e8f258cfbbcc51c7/raw/vanta_hitbox.lua) | [vanta_hitbox_obf.lua](https://gist.githubusercontent.com/JakoScripts/61e8e91041a490a3e8f258cfbbcc51c7/raw/vanta_hitbox_obf.lua) | Combat · Targets · Config |
-| generic shooter | [vanta_wh.lua](https://gist.githubusercontent.com/JakoScripts/455138e3d75b17f9610507f66b7594aa/raw/vanta_wh.lua) | [vanta_wh_obf.lua](https://gist.githubusercontent.com/JakoScripts/455138e3d75b17f9610507f66b7594aa/raw/vanta_wh_obf.lua) | Visuals · Targets · Config |
+| Скрипт | Ссылка | Вкладки |
+|---|---|---|
+| Murder Mystery 2 | [JakoScripts.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts.lua) | Combat · Visuals · Movement · Config |
+| The Lost Front | [JakoScripts_lostfront.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_lostfront.lua) | Combat · Visuals · Movement · Config |
+| Pistol Arena | [JakoScripts_pistol.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_pistol.lua) | Combat · Visuals · Movement · Config |
+| Steal an Egg | [JakoScripts_stealegg.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_stealegg.lua) | Farm · Visuals · Stealth · Config |
+| Blade Ball | [JakoScripts_bladeball.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_bladeball.lua) | Combat · Timing · Visuals · Config |
+| Deagle Duels | [JakoScripts_deagle.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_deagle.lua) | Combat · Visuals · Misc · Config |
+| FPV Drone Game | [JakoScripts_fpv_esp.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_fpv_esp.lua) | Visuals · Drones · Config |
+| generic FPS | [JakoScripts_hitbox.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_hitbox.lua) | Combat · Targets · Config |
+| generic shooter | [JakoScripts_wh.lua](https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_wh.lua) | Visuals · Targets · Config |
 
 Запуск — одной строкой:
 
 ```lua
-loadstring(game:HttpGet("<ссылка из таблицы>"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/Qold123/JakoScripts/main/JakoScripts_pistol.lua"))()
 ```
 
 Локально, если файл лежит в workspace экзекутора:
 
 ```lua
-loadstring(readfile("JakoScripts_wh.lua"))()
+loadstring(readfile("JakoScripts_lostfront.lua"))()
 ```
 
 ## Обновление
 
-Репозиторий — источник. Правки идут в `main`, клиент тянет свежую версию при запуске: строку в инжекторе менять не нужно.
+Репозиторий — источник. Правки идут в `main`, клиент тянет свежую версию при
+запуске: строку в инжекторе менять не нужно.
 
-```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts_wh.lua"))()
-```
-
-Репозиторий приватный, поэтому raw без токена отдаёт 404 — либо публичный доступ, либо `JakoScripts_bootstrap.lua` с fine-grained PAT (Contents: Read-only) в `CFG.token`.
+Если raw начнёт отдавать 404 — проверить ветку (`main`), имя файла и что
+репозиторий остался публичным.
 
 ## Интерфейс
 
@@ -59,7 +57,13 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScrip
 | switch | ON `#7C3AED`, OFF `#FFFFFF1E` |
 | slider | трек `#FFFFFF15`, заливка `#7C3AED → #C4B5FD` |
 
-Шрифт Inter с откатом на Gotham. Иконки — lucide `target / eye / zap / settings`, нарисованы вектором. Эмодзи в интерфейсе нет. Клавиша скрытия окна — RightShift, переназначается в Config.
+Шрифт Inter с откатом на Gotham. Иконки — lucide `target / eye / zap / settings`,
+нарисованы вектором. Эмодзи в интерфейсе нет. Клавиша скрытия окна — RightShift,
+переназначается в Config.
+
+Текст шелла идёт с `AutoLocalize = false`: авто-локализация в CoreGui заставляет
+движок дёргать `CoreGui.RobloxGui.Modules.Common.Locales` на каждую строку и под
+экзекутором сыпет `attempt to call a nil value` в консоль.
 
 ![Style A](JakoScripts_style_a_preview.png)
 
@@ -71,28 +75,44 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScrip
 |---|---|
 | `StyleA_shell.lua` | шелл Style A, вшивается в каждый скрипт байт-в-байт |
 | `JakoScripts_<игра>.lua` | скрипты |
-| `JakoScripts_bootstrap.lua` | вход для приватного репо (токен) |
 | `JakoScripts_loader.lua` | лоадер с миррорами и локальным фолбэком |
+| `JakoScripts_bootstrap.lua` | вход для приватного репозитория (токен) |
 | `JakoScripts_silencer.lua` | глушит нативные тосты Roblox (`SetCore SendNotification`) |
 | `light_obf.py` | сборка light obf: локальные в `_XX<n>`, строки в hex, комментарии срезаны |
 | `obf_diff.py` | сверка токен-потоков обычного файла и обф-сборки |
 | `inject_shell.py` | вставка/обновление шелла по маркеру `-- @@SHELL@@` |
-| `ship_gists.py` | залив обычного и обф-файла в гист, с воротами проверки |
 | `JakoScripts_check.py` | структурная проверка Luau: блоки, вызовы, шелл-API, связка State ↔ UI |
 | `JakoScripts_preview.py` | рендер мокапа: читает вкладки прямо из кода |
 | `verify_refactor.py` | диф логики между исходником и рефактором |
 
 ## Как устроена сборка
 
-Каждый скрипт собран одной заменой: старый UI-блок вырезан до маркера `-- @@SHELL@@`, игровая логика не тронута. Шелл подставляется скриптом, поэтому во всех восьми файлах он идентичен — правка дизайна не требует ручной синхронизации.
+Каждый скрипт собран одной заменой: старый UI-блок вырезан до маркера `-- @@SHELL@@`,
+игровая логика не тронута. Шелл подставляется скриптом, поэтому во всех файлах он
+идентичен — правка дизайна не требует ручной синхронизации.
 
 ```powershell
 python inject_shell.py                    # обновить шелл во всех скриптах
 python inject_shell.py JakoScripts_wh.lua # или в одном
 python JakoScripts_check.py *.lua         # структурная проверка
 python JakoScripts_preview.py --all       # перерендерить превью
-python ship_gists.py --check              # сравнить гисты с локальными файлами
-python ship_gists.py                      # залить обычный + обф
 ```
 
-Обф-сборка не выпускается, если ломает код: `ship_gists.py` прогоняет её через `obf_diff.py` (токен-поток обязан совпасть с обычным файлом, переименование — быть согласованным) и через структурную проверку (не должно появиться новых неопределённых имён или потерянных объявлений). Не прошло — файл не публикуется.
+Ворота перед пушем: `brackets: balanced`, `blocks: final depth = 0`,
+`undefined-call scan: clean`, `shell wiring` видит все вкладки, `state keys`
+показывает, что каждый ключ `State` привязан к UI.
+
+## Заметки по граблям
+
+- Приватный raw у GitHub не работает ни с `?token=`, ни с токеном в userinfo,
+  ни через `github.com/.../raw`. Отвечает только запрос с заголовком
+  `Authorization`, а его умеет `request` / `syn.request`. Отсюда
+  `JakoScripts_bootstrap.lua`.
+- `hookmetamethod` на `__namecall` обязан ставиться один раз на процесс.
+  Повторная установка вешает новый слой поверх старого, старые замыкания держат
+  мёртвое окружение, и консоль забивается `attempt to call a nil value` из
+  CoreGui-модулей.
+- `BlurEffect` в `Lighting` не удаляется сам: при повторном запуске старый надо
+  снять, иначе они копятся.
+- `filtergc`-реестр нельзя кэшировать навсегда: если игрока в нём нет, кэш надо
+  сбросить, иначе сторона не определится до перезапуска.

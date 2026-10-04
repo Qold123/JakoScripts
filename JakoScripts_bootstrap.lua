@@ -18,8 +18,8 @@
 ]]
 
 local CFG = {
-    owner  = "JakoScripts",
-    repo   = "JakoScripts",
+    owner  = "Qold123",
+    repo   = "Qold123",
     branch = "main",
     file   = "JakoScripts.lua",
     token  = "",           -- ← fine-grained PAT, Contents: Read-only
@@ -40,7 +40,7 @@ if CFG.token ~= "" then
         CFG.owner, CFG.repo, CFG.file, CFG.branch), {
         ["Accept"]        = "application/vnd.github.raw",
         ["Authorization"] = "Bearer " .. CFG.token,
-        ["User-Agent"]    = "JakoScripts",
+        ["User-Agent"]    = "Qold123",
     })
     -- запасной путь: classic PAT прямо в raw-URL
     if not body then
@@ -52,7 +52,7 @@ else
         CFG.owner, CFG.repo, CFG.branch, CFG.file))
 end
 
-if not body or #body < 2000 or not string.find(body, "JakoScripts", 1, true) then
+if not body or #body < 2000 or not string.find(body, "Qold123", 1, true) then
     return warn("[JakoScripts] не получил код. Проверь токен (Contents: Read), ветку " ..
         CFG.branch .. " и имя файла " .. CFG.file)
 end
@@ -63,5 +63,5 @@ local ok, rerr = pcall(chunk)
 if not ok then return warn("[JakoScripts] runtime: " .. tostring(rerr)) end
 
 CFG.token = nil
-getgenv().JakoScripts = { name = "JakoScripts", version = "v3.0", source = "github:" .. CFG.repo }
+getgenv().JakoScripts = { name = "Qold123", version = "v3.0", source = "github:" .. CFG.repo }
 print("[JakoScripts] loaded from github:" .. CFG.owner .. "/" .. CFG.repo)
