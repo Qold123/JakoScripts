@@ -1,0 +1,2 @@
+5bfc6c07c12e307e165f3ae99328e4c7
+https://gist.githubusercontent.com/JakoScripts/5bfc6c07c12e307e165f3ae99328e4c7/raw/vanta_pistol.lua

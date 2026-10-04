@@ -101,9 +101,24 @@ local spaceHeld = false
 local triggerHeld = false
 local stickyTarget = nil
 local teamSrc = "?" -- какой источник сейчас работает: roster | hilite | manual | ?
--- true = идёт наш собственный рейкаст: хук silent aim его не трогает (иначе воллчек
--- проверял бы цель рейкастом, который сам же в неё и развёрнут)
-local silentGuard = false
+-- Общая коробка silent aim. Живёт в getgenv, а не в локальной переменной: хук
+-- ставится один раз на процесс, и его замыкание обязано видеть состояние
+-- повторных запусков. guard = идёт наш собственный рейкаст (воллчек, карабканье) —
+-- такой запрос хук не трогает.
+local silentBox = { on = false, part = nil, guard = false, hitpart = "Head" }
+do
+    local env = (getgenv and getgenv()) or _G
+    if type(env) == "table" then
+        if type(env.__JakoSilent) == "table" then
+            silentBox = env.__JakoSilent -- коробка прошлого запуска: хук уже стоит
+            silentBox.on = false
+            silentBox.part = nil
+            silentBox.guard = false
+        else
+            env.__JakoSilent = silentBox
+        end
+    end
+end
 
 -- ===== ЧАСТИ ТЕЛА (риг вложенный — ищем рекурсивно) =====
 local function findHead(char) return char and char:FindFirstChild("Head", true) or nil end
@@ -314,9 +329,9 @@ local function isVisible(container, part)
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     rayParams.FilterDescendantsInstances = exclusions
     local origin = Camera.CFrame.Position
-    silentGuard = true
+    silentBox.guard = true
     local res = Workspace:Raycast(origin, part.Position - origin, rayParams)
-    silentGuard = false
+    silentBox.guard = false
     if res == nil then return true end
     if container and res.Instance:IsDescendantOf(container) then return true end
     return false
@@ -516,6 +531,7 @@ local function updateDroneESP(myPos)
                     g.StudsOffset = Vector3.new(0, 2, 0) g.AlwaysOnTop = true
                     g.Adornee = part g.Parent = m
                     local l = Instance.new("TextLabel") l.Size = UDim2.new(1, 0, 1, 0)
+                    pcall(function() l.AutoLocalize = false end)
                     l.BackgroundTransparency = 1 l.Font = Enum.Font.GothamBold l.TextSize = 13
                     l.TextColor3 = Color3.fromRGB(255, 180, 80) l.TextStrokeTransparency = 0.4 l.Parent = g
                     e.gui, e.lbl = g, l
@@ -574,46 +590,64 @@ end
 -- FindPartOnRay / FindPartOnRayWithIgnoreList. Там, где попадание уходит ремоутом с
 -- направлением камеры, хук не участвует — нужен перехват конкретного ремоута,
 -- имя которого своё у каждой версии игры.
-local silentPartRef = nil -- silentGuard объявлен выше, до isVisible
+-- Хук ставится ОДИН раз на процесс. Раньше каждый повторный exec вешал новый
+-- __namecall поверх предыдущего: старые замыкания держали мёртвое окружение, и
+-- внутренние вызовы движка начинали сыпать "attempt to call a nil value" из
+-- CoreGui-модулей. Решение: флаг в getgenv + одно замыкание на всех.
+local function silentArgs(self, ...)
+    local method = getnamecallmethod()
+    if self ~= Workspace then return false end
+    if method ~= "Raycast" and method ~= "FindPartOnRay" and method ~= "FindPartOnRayWithIgnoreList" then
+        return false
+    end
+    local part = silentBox.part
+    if not (part and part.Parent) then return false end
+    local args = { ... }
+    local origin
+    if method == "Raycast" then
+        if typeof(args[1]) == "Vector3" then origin = args[1] end
+    elseif typeof(args[1]) == "Ray" then
+        origin = args[1].Origin
+    end
+    -- уводим только рейкасты из-под своей камеры: чужие системы игры не трогаем
+    if not origin or (origin - Camera.CFrame.Position).Magnitude >= 25 then return false end
+    local aimAt = part.Position
+    if silentBox.hitpart == "Random" then
+        aimAt = part.Position + Vector3.new(
+            (math.random() - 0.5) * part.Size.X,
+            (math.random() - 0.5) * part.Size.Y,
+            (math.random() - 0.5) * part.Size.Z)
+    end
+    if method == "Raycast" then
+        args[2] = aimAt - origin
+    else
+        args[1] = Ray.new(origin, (aimAt - origin).Unit * 1000)
+    end
+    return true, args
+end
+
 do
-    local mt = getrawmetatable and getrawmetatable(game)
-    if mt and setreadonly and newcclosure and hookfunction then
-        local old = mt.__namecall
-        setreadonly(mt, false)
-        mt.__namecall = newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            if State.silent_aim and silentPartRef and not silentGuard and self == Workspace
-                and (method == "Raycast" or method == "FindPartOnRay" or method == "FindPartOnRayWithIgnoreList") then
-                local part = silentPartRef
-                if part and part.Parent then
-                    local args = { ... }
-                    local origin
-                    if method == "Raycast" then
-                        if typeof(args[1]) == "Vector3" then origin = args[1] end
-                    elseif typeof(args[1]) == "Ray" then
-                        origin = args[1].Origin
-                    end
-                    -- уводим только рейкасты из-под своей камеры: чужие системы игры не трогаем
-                    if origin and (origin - Camera.CFrame.Position).Magnitude < 25 then
-                        local aimAt = part.Position
-                        if State.silent_hitpart == "Random" then
-                            aimAt = part.Position + Vector3.new(
-                                (math.random() - 0.5) * part.Size.X,
-                                (math.random() - 0.5) * part.Size.Y,
-                                (math.random() - 0.5) * part.Size.Z)
-                        end
-                        if method == "Raycast" then
-                            args[2] = aimAt - origin
-                        else
-                            args[1] = Ray.new(origin, (aimAt - origin).Unit * 1000)
-                        end
+    local env = (getgenv and getgenv()) or _G
+    local already = type(env) == "table" and env.__JakoSilentHook
+    if not already then
+        local mt = getrawmetatable and getrawmetatable(game)
+        local old = mt and mt.__namecall
+        if mt and old and setreadonly and newcclosure then
+            setreadonly(mt, false)
+            mt.__namecall = newcclosure(function(self, ...)
+                -- решение о подмене принимает pcall: что бы внутри ни сломалось,
+                -- вызов всё равно уйдёт в оригинал и движок не пострадает
+                if silentBox.on and silentBox.part and not silentBox.guard then
+                    local ok, swapped, args = pcall(silentArgs, self, ...)
+                    if ok and swapped then
                         return old(self, table.unpack(args))
                     end
                 end
-            end
-            return old(self, ...)
-        end)
-        setreadonly(mt, true)
+                return old(self, ...)
+            end)
+            setreadonly(mt, true)
+            if type(env) == "table" then env.__JakoSilentHook = true end
+        end
     end
 end
 
@@ -627,8 +661,10 @@ end
 
 -- выбор цели для silent aim: тот же FOV-критерий, но без движения камеры
 local function refreshSilent()
-    if not State.silent_aim then
-        silentPartRef = nil
+    silentBox.on = State.silent_aim and true or false
+    silentBox.hitpart = State.silent_hitpart
+    if not silentBox.on then
+        silentBox.part = nil
         return
     end
     local center = Camera.ViewportSize / 2
@@ -650,7 +686,7 @@ local function refreshSilent()
             end
         end
     end
-    silentPartRef = best
+    silentBox.part = best
 end
 
 -- ===== V3.0: ХОДЬБА / ПРЫЖОК / NOCLIP =====
@@ -852,7 +888,12 @@ local StyleA = (function()
         local l = Instance.new("TextLabel")
         l.BackgroundTransparency = 1 l.Text = text or "" l.TextSize = size or 12
         l.TextColor3 = col or P.text l.TextXAlignment = Enum.TextXAlignment.Left
-        l.TextYAlignment = Enum.TextYAlignment.Center l.Parent = parent
+        l.TextYAlignment = Enum.TextYAlignment.Center
+        -- CoreGui-текст с включённой авто-локализацией заставляет движок дёргать
+        -- CoreGui.RobloxGui.Modules.Common.Locales на каждой строке; в связке с
+        -- экзекутором это даёт спам "attempt to call a nil value" из Locales
+        pcall(function() l.AutoLocalize = false end)
+        l.Parent = parent
         if FONT_OK then
             local f = (weight == "semi" and F_SEMI) or (weight == "med" and F_MED) or F_REG
             if f and pcall(function() l.FontFace = f end) then return l end
@@ -935,6 +976,11 @@ local StyleA = (function()
         local KEY = cfg.key or state.ui_key or Enum.KeyCode.RightShift
         state.ui_key = KEY
 
+        -- повторный запуск не должен копить BlurEffect в Lighting: старый снимаем
+        pcall(function()
+            local old = Lighting:FindFirstChild(CONFIG.brand .. "_Glass")
+            if old then old:Destroy() end
+        end)
         local blur = Instance.new("BlurEffect")
         blur.Name = CONFIG.brand .. "_Glass"
         blur.Size = CONFIG.blur
@@ -1834,7 +1880,8 @@ teardownESP = function()
     State.fov_show = false
     State.speed_on = false
     State.jump_on = false
-    silentPartRef = nil
+    silentBox.on = false
+    silentBox.part = nil
     stickyTarget = nil
     triggerHeld = false
     for p, _ in pairs(espCache) do clearESP(p) end
@@ -1888,11 +1935,14 @@ local function ensureESP(p, char, enemy)
             g.StudsOffset = Vector3.new(0,3,0) g.AlwaysOnTop = true
             g.Adornee = head g.Parent = char
             local n = Instance.new("TextLabel") n.Size = UDim2.new(1,0,0,20) n.BackgroundTransparency = 1
+            pcall(function() n.AutoLocalize = false end)
             n.Font = Enum.Font.GothamBold n.TextSize = 13 n.TextStrokeTransparency = 0.4 n.Parent = g
             local d = Instance.new("TextLabel") d.Size = UDim2.new(1,0,0,16) d.Position = UDim2.new(0,0,0,19)
+            pcall(function() d.AutoLocalize = false end)
             d.BackgroundTransparency = 1 d.Font = Enum.Font.Gotham d.TextSize = 12
             d.TextColor3 = Color3.fromRGB(230,230,235) d.TextStrokeTransparency = 0.4 d.Parent = g
             local hp = Instance.new("TextLabel") hp.Size = UDim2.new(1,0,0,14) hp.Position = UDim2.new(0,0,0,34)
+            pcall(function() hp.AutoLocalize = false end)
             hp.BackgroundTransparency = 1 hp.Font = Enum.Font.GothamBold hp.TextSize = 12 hp.TextStrokeTransparency = 0.4 hp.Parent = g
             e.gui, e.n, e.d, e.hp = g, n, d, hp
         end
@@ -2193,9 +2243,9 @@ local function wallclimbTick()
     local cf = hrp.CFrame
     local dirs = { cf.LookVector, -cf.LookVector, cf.RightVector, -cf.RightVector }
     for i = 1, 4 do
-        silentGuard = true
+        silentBox.guard = true
         local res = Workspace:Raycast(origin, dirs[i] * 4, climbParams)
-        silentGuard = false
+        silentBox.guard = false
         if res and math.abs(res.Normal.Y) < 0.35 then
             local v = hrp.AssemblyLinearVelocity
             hrp.AssemblyLinearVelocity = Vector3.new(v.X * 0.25, State.wallclimb_speed, v.Z * 0.25)

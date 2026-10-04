@@ -113,7 +113,12 @@ local StyleA = (function()
         local l = Instance.new("TextLabel")
         l.BackgroundTransparency = 1 l.Text = text or "" l.TextSize = size or 12
         l.TextColor3 = col or P.text l.TextXAlignment = Enum.TextXAlignment.Left
-        l.TextYAlignment = Enum.TextYAlignment.Center l.Parent = parent
+        l.TextYAlignment = Enum.TextYAlignment.Center
+        -- CoreGui-текст с включённой авто-локализацией заставляет движок дёргать
+        -- CoreGui.RobloxGui.Modules.Common.Locales на каждой строке; в связке с
+        -- экзекутором это даёт спам "attempt to call a nil value" из Locales
+        pcall(function() l.AutoLocalize = false end)
+        l.Parent = parent
         if FONT_OK then
             local f = (weight == "semi" and F_SEMI) or (weight == "med" and F_MED) or F_REG
             if f and pcall(function() l.FontFace = f end) then return l end
@@ -196,6 +201,11 @@ local StyleA = (function()
         local KEY = cfg.key or state.ui_key or Enum.KeyCode.RightShift
         state.ui_key = KEY
 
+        -- повторный запуск не должен копить BlurEffect в Lighting: старый снимаем
+        pcall(function()
+            local old = Lighting:FindFirstChild(CONFIG.brand .. "_Glass")
+            if old then old:Destroy() end
+        end)
         local blur = Instance.new("BlurEffect")
         blur.Name = CONFIG.brand .. "_Glass"
         blur.Size = CONFIG.blur
