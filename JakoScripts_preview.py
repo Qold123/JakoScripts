@@ -146,60 +146,62 @@ def parse_ui(path):
     if cut >= 0:
         body = body[cut:]
 
-    handles = {}
-    current = None
-    for line in body.split("\n"):
-        line = line.strip()
-        m = re.match(r'local\s+(\w+)\s*=\s*UI:Tab\(\s*"([^"]+)"\s*,\s*"([^"]+)"', line)
-        if m:
-            current = {"name": m.group(2), "icon": m.group(3), "rows": []}
-            spec["tabs"].append(current)
-            handles[m.group(1)] = current
-            continue
-        m = re.match(r'(\w+):Section\(\s*"([^"]+)"', line)
-        if m and m.group(1) in handles:
-            handles[m.group(1)]["rows"].append(("section", m.group(2)))
-            continue
-        m = re.match(r'(\w+):Info\(\s*"([^"]+)"', line)
-        if m and m.group(1) in handles:
-            handles[m.group(1)]["rows"].append(("info", m.group(2)))
-            continue
-        m = re.match(r'(\w+):Toggle\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*(?:,\s*(true|false))?', line)
-        if m and m.group(1) in handles:
-            on = m.group(4)
-            if on is None:
-                on = defaults.get(m.group(3), "false") == "true"
-            else:
-                on = (on == "true")
-            handles[m.group(1)]["rows"].append(("toggle", m.group(2), on))
-            continue
-        m = re.match(r'(\w+):Slider\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*(?:,\s*"([^"]*)")?', line)
-        if m and m.group(1) in handles:
+    tabs = {}
+    for m in re.finditer(r'local\s+(\w+)\s*=\s*UI:Tab\(\s*"([^"]+)"\s*,\s*"(\w+)"', body):
+        tab = {"name": m.group(2), "icon": m.group(3), "rows": [], "at": m.start()}
+        tabs[m.group(1)] = tab
+        spec["tabs"].append(tab)
+
+    # строки вкладок: вызовы могут быть многострочными (замыкания on_change)
+    ROWS = [
+        ("section", re.compile(r'(\w+):Section\(\s*"([^"]+)"')),
+        ("info", re.compile(r'(\w+):Info\(\s*"([^"]+)"')),
+        ("toggle", re.compile(r'(\w+):Toggle\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*(?:,\s*(true|false))?')),
+        ("slider", re.compile(r'(\w+):Slider\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*,\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*(?:,\s*"([^"]*)")?')),
+        ("cycle", re.compile(r'(\w+):Cycle\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*,\s*\{([^}]*)\}')),
+        ("keybind", re.compile(r'(\w+):Keybind\(\s*"([^"]+)"')),
+        ("button", re.compile(r'(\w+):Button\(\s*(.+?)\s*,\s*"(\w+)"')),
+    ]
+    found = []
+    for kind, rx in ROWS:
+        for m in rx.finditer(body):
+            h = m.group(1)
+            if h not in tabs:
+                continue
+            found.append((m.start(), h, kind, m))
+    found.sort(key=lambda t: t[0])
+
+    for _pos, h, kind, m in found:
+        rows = tabs[h]["rows"]
+        if kind == "section":
+            rows.append(("section", m.group(2)))
+        elif kind == "info":
+            rows.append(("info", m.group(2)))
+        elif kind == "toggle":
+            default = m.group(4)
+            on = (default == "true") if default else (defaults.get(m.group(3), "false") == "true")
+            rows.append(("toggle", m.group(2), on))
+        elif kind == "slider":
             lo, hi = float(m.group(4)), float(m.group(5))
-            raw = defaults.get(m.group(3))
             try:
-                val = float(raw)
+                val = float(defaults.get(m.group(3)))
             except (TypeError, ValueError):
                 val = lo + (hi - lo) * 0.3
             ratio = 0 if hi == lo else max(0.0, min(1.0, (val - lo) / (hi - lo)))
             shown = f"{int(val)}" if (hi - lo) >= 10 else f"{val:g}"
-            handles[m.group(1)]["rows"].append(("slider", m.group(2), shown + (m.group(6) or ""), ratio))
-            continue
-        m = re.match(r'(\w+):Cycle\(\s*"([^"]+)"\s*,\s*"(\w+)"\s*,\s*\{([^}]*)\}', line)
-        if m and m.group(1) in handles:
+            rows.append(("slider", m.group(2), shown + (m.group(6) or ""), ratio))
+        elif kind == "cycle":
             opts = [o.strip().strip('"') for o in m.group(4).split(",") if o.strip()]
-            val = opts[0] if opts else "—"
-            handles[m.group(1)]["rows"].append(("cycle", m.group(2), val))
-            continue
-        m = re.match(r'(\w+):Keybind\(\s*"([^"]+)"', line)
-        if m and m.group(1) in handles:
-            handles[m.group(1)]["rows"].append(("keybind", m.group(2), "RightShift"))
-            continue
-        m = re.match(r'(\w+):Button\(\s*(.+?)\s*,\s*"(\w+)"', line)
-        if m and m.group(1) in handles:
+            rows.append(("cycle", m.group(2), opts[0] if opts else "—"))
+        elif kind == "keybind":
+            rows.append(("keybind", m.group(2), "RightShift"))
+        elif kind == "button":
             label = re.sub(r'^"|"$', "", m.group(2))
-            handles[m.group(1)]["rows"].append(("button", label, m.group(3) == "ghost"))
-            continue
+            rows.append(("button", label, m.group(3) == "ghost"))
+
+    spec["tabs"].sort(key=lambda t: t["at"])
+    for t in spec["tabs"]:
+        t.pop("at", None)
     return spec
 
 
@@ -447,7 +449,9 @@ def main():
     if not args or args == ["--all"]:
         args = sorted(f for f in os.listdir(".") if f.startswith("JakoScripts_") and f.endswith(".lua"))
     for path in args:
-        spec = HAND_SPECS.get(os.path.basename(path)) or parse_ui(path)
+        spec = parse_ui(path)
+        if not spec["tabs"]:
+            spec = HAND_SPECS.get(os.path.basename(path)) or spec
         out = spec.get("out") or (re.sub(r"\.lua$", "", path) + "_preview.png")
         if not spec["tabs"]:
             print(f"{path:<32} skipped: вкладки не распознаны")

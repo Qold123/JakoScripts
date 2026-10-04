@@ -227,6 +227,26 @@ if "UI:Tab(" in clean:
     else:
         print("shell method surface: clean")
 
+    # --- state <-> UI binding cross-check (needs raw source: strings are stripped in `clean`) ---
+    ui_keys = set(re.findall(r':(?:Toggle|Slider|Cycle|Keybind)\(\s*"[^"]*"\s*,\s*"(\w+)"', src))
+    sblock = re.search(r"\bState\s*=\s*\{(.*?)\n\}", src, re.S)
+    state_keys = set(re.findall(r"(?m)^\s*(\w+)\s*=", sblock.group(1))) if sblock else set()
+    cut_a = src.find("-- == VANTA STYLE A SHELL")
+    cut_b = src.find("-- == /VANTA STYLE A SHELL ==")
+    if cut_a > 0 and cut_b > cut_a:
+        logic = src[:cut_a] + src[cut_b + len("-- == /VANTA STYLE A SHELL =="):]
+    else:
+        logic = src
+    used = set(re.findall(r"\b(?:state|State)\.(\w+)", logic))
+    shell_owned = {"ui_key", "ui_toasts", "ui_alpha", "ui_blur", "ui_watermark"}
+    print(f"state keys: declared={len(state_keys)} ui-bound={len(ui_keys)} logic-used={len(used)}")
+    silent = sorted(used - ui_keys - shell_owned)
+    if silent:
+        print(f"  logic reads keys with no UI row: {silent}")
+    unbound = sorted(ui_keys - state_keys - shell_owned)
+    if unbound:
+        print(f"  UI rows binding keys absent from State: {unbound}")
+
 # ---------- service locals that the old UI used to declare ----------
 # проверяем только вне шелла: сам шелл свои сервисы объявляет внутри IIFE
 SERVICE_LOCALS = ["UserInputService", "TweenService", "RunService", "Players", "Workspace",

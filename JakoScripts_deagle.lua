@@ -647,7 +647,11 @@ local StyleA = (function()
         wmTitle.Size = UDim2.new(0, 70, 1, 0) wmTitle.Position = UDim2.new(1, -82, 0, 0)
         wmTitle.TextXAlignment = Enum.TextXAlignment.Right wmTitle.ZIndex = 21
 
-        local ui = { gui = gui, window = win, state = state, pages = {}, nav = {}, rows = {}, listening = nil }
+        local ui = {
+            gui = gui, window = win, state = state,
+            blur = blur, watermark = wm, toasts = toastHolder, content = content,
+            pages = {}, nav = {}, rows = {}, listening = nil,
+        }
 
         -- ---------- elements ----------
         local function newPage(name)
