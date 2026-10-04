@@ -58,11 +58,26 @@ BLOCK_ENDERS = {"end", "else", "elseif", "until"}
 EXPR_STOP = {"then", "do", "end", "else", "elseif", "until"}
 STARTERS = {"local", "if", "while", "for", "repeat", "return", "break",
             "continue", "do", "function"}
-# tokens that may legitimately begin an expression
-WANT = ({"function", "if", "nil", "true", "false", "not", "...", "-", "#", "..."}
-        | {"("}
-        | STARTERS)
+# Tokens that may legitimately begin an *expression*.  Statement starters such
+# as `if`, `local`, `return` are deliberately absent: `if` is only an expression
+# where a value is expected (see value_position()).
+WANT_VALUES = {"function", "nil", "true", "false", "not", "...", "-", "#",
+               "(", "{", "[", "..."}
+WANT_KINDS = ("name", "num", "string", "lstring", "interp")
+
+
+def wants_expression(tok):
+    if tok is None:
+        return False
+    if tok.kind != "name":
+        return True                     # a literal / string is always a value
+    return tok.value in WANT_VALUES
 NOT_A_NAME = {"_", "nil", "true", "false"}
+# tokens an expression may continue with across a line break
+BINARY_CONT = {
+    "+", "-", "*", "/", "//", "%", "^", "..", "==", "~=", "<", ">", "<=", ">=",
+    "and", "or", "?", "..=", "+=", "-=", "*=", "/=", "%=", "^=", "|", "&",
+}
 OPENERS = {"(": ")", "[": "]", "{": "}"}
 CLOSERS = {")", "]", "}"}
 
@@ -589,7 +604,7 @@ class Parser:
         """Read one expression.  `stop` lists the context keywords that end it."""
         stop = set(stop)
         first = self.peek()
-        if first is None or first.value not in WANT:
+        if not wants_expression(first):
             return                          # nothing expression-like here
         if first.value == "if" and not self.value_position():
             return                          # a statement `if`, not an expression
@@ -648,8 +663,14 @@ class Parser:
                         return
                     return
                 if line is not None and t.line > line:
+                    if t.value == "if" and not self.value_position():
+                        return              # a statement `if`
                     if t.kind == "name" and t.value in STARTERS:
                         return
+                    if t.value not in BINARY_CONT:
+                        return              # a new statement, not a continuation
+                if t.value == "if" and not self.value_position():
+                    return
                 if (t.kind == "name" and t.value not in KEYWORDS
                         and self.peek(1) is not None and self.peek(1).value == "="):
                     self.next()             # a table key / named argument

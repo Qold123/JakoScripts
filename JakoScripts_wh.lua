@@ -1,8 +1,9 @@
--- JakoScripts WH v1 | Luau | generic Roblox shooter | VANTA Style A
--- Простой волхак: 2D-боксы + ники + дистанция + трассеры. ТОЛЬКО Drawing-оверлей:
--- в игре не создаётся ни одной детали, сканерам ловить нечего.
+-- JakoScripts WH v2 | Luau | generic Roblox shooter | VANTA Style A
+-- Волхак с полным оверлеем: боксы (2D / углы / заливка), ники с оружием и хп-баром,
+-- трассеры, скелет, стрелки к врагам за экраном, прицел и кольцо FOV.
+-- Всё ТОЛЬКО Drawing: в игре не создаётся ни одной детали, сканерам ловить нечего.
 -- Нужен executor с Drawing, без него скрипт честно скажет и выключится.
--- UI: Style A — окно 480x360, сайдбар 150, вкладки Visuals / Config, RightShift скрыть.
+-- UI: Style A — окно 480x360, сайдбар 150, вкладки Visuals / Targets / Config, RightShift скрыть.
 -- Запуск: loadstring(game:HttpGet("RAW_URL"))()
 
 local Players = game:GetService("Players")
@@ -1297,7 +1298,7 @@ local UI = StyleA.new({
     state    = State,
     title    = "WH",
     subtitle = "generic shooter",
-    version  = "v1",
+    version  = "v2",
 })
 
 local setStat = UI:Stat("seen 0 / alive 0")
@@ -1379,5 +1380,5 @@ end)
 
 syncAntiAfk()
 
-UI:Toast("JakoScripts WH v1 loaded", "ok")
-print("[JakoScripts WH v1 · Style A] loaded")
+UI:Toast("JakoScripts WH v2 loaded", "ok")
+print("[JakoScripts WH v2 · Style A] loaded")
