@@ -524,14 +524,20 @@ local StyleA = (function()
                 local ok, r = pcall(fn)
                 if ok and r then cands[#cands + 1] = r end
             end
-            push(function() return gethui and gethui() or nil end)
-            push(function() return get_hidden_gui and get_hidden_gui() or nil end)
-            push(function() return get_hui and get_hui() or nil end)
-            push(function() return SVC("CoreGui") end)
+            -- PlayerGui идёт ПЕРВЫМ. Любое движение в CoreGui заставляет
+            -- TopbarPlus — а он есть в большинстве игр, включая HD Admin —
+            -- перебрать свои модули, среди которых
+            -- CoreGui.RobloxGui.Modules.Common.Locales. Под экзекутором он
+            -- возвращает nil, и строка 1 падает с "attempt to call a nil value".
+            -- В PlayerGui нашего окна для этого перебора просто не существует.
             push(function()
                 local plr = SVC("Players").LocalPlayer
                 return plr and plr:FindFirstChildOfClass("PlayerGui") or nil
             end)
+            push(function() return gethui and gethui() or nil end)
+            push(function() return get_hidden_gui and get_hidden_gui() or nil end)
+            push(function() return get_hui and get_hui() or nil end)
+            push(function() return SVC("CoreGui") end)
         end
 
         local gui = Instance.new("ScreenGui")
@@ -541,16 +547,24 @@ local StyleA = (function()
         gui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         gui.DisplayOrder = 999
 
-        -- Крепим по очереди: gethui есть не везде, а запись в CoreGui бывает
-        -- запрещена. Раньше присваивание шло без pcall и молча роняло весь скрипт
-        -- до первой печати — снаружи это выглядело как «скрипт не работает».
-        local parent = nil
+        -- Сначала вычищаем окно прошлого запуска во ВСЕХ кандидатах, потом крепим
+        -- новое. Иначе при смене места (CoreGui -> PlayerGui) старая копия осталась
+        -- бы висеть там, откуда мы ушли.
         for _, p in ipairs(cands) do
             if p then
                 pcall(function()
                     local old = p:FindFirstChild(CONFIG.brand)
                     if old and old ~= gui then old:Destroy() end
                 end)
+            end
+        end
+
+        -- Крепим по очереди: gethui есть не везде, а запись в CoreGui бывает
+        -- запрещена. Раньше присваивание шло без pcall и молча роняло весь скрипт
+        -- до первой печати — снаружи это выглядело как «скрипт не работает».
+        local parent = nil
+        for _, p in ipairs(cands) do
+            if p then
                 local ok = pcall(function() gui.Parent = p end)
                 if ok and gui.Parent == p then parent = p break end
             end
