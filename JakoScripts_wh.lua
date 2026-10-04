@@ -25,6 +25,17 @@ local State = {
     enemies_only = true, -- только враги (своих скрыть)
     team_check = true,
     maxdist = 1500,
+    esp_skeleton = false,  -- линии скелета (Drawing Line, пул на игрока)
+    esp_arrows = false,    -- стрелка у края экрана к цели за кадром
+    esp_healthbar = true,  -- полоска HP слева от бокса (фон + заливка)
+    esp_weapon = true,     -- имя Tool в строку ника
+    fov_ring = true,       -- кольцо FOV по центру
+    -- радиус кольца FOV, px (40..600)
+    fov_size = 200,
+    crosshair = false,     -- кастомный прицел из 4 Line
+    box_style = "2D",      -- "2D" | "Corner" | "Filled"
+    antiafk = true,        -- LocalPlayer.Idled -> VirtualUser
+    dist_fade = false,     -- прозрачность бокса/ника растёт с дистанцией
 }
 
 -- ===== TEAM (реестр -> контейнеры -> Team) =====
@@ -76,51 +87,369 @@ local function isEnemy(plr)
     return true
 end
 
--- ===== OVERLAY POOL (один комплект на игрока, переиспользуем) =====
-local items = {} -- [player] = {box, txt, line}
+-- ===== OVERLAY POOL (один комплект Drawing на игрока, переиспользуем) =====
+-- Всё, что создано для игрока, лежит в it.all -> скрыть/снять = один цикл.
+local items = {} -- [player] = { all = {drawing...}, box, txt, line, ... }
+
+local unloaded = false
+local connRender, connHeartbeat, antiAfkConn = nil, nil, nil
+
+local BOX_COLOR = Color3.fromRGB(255, 90, 70)
+local BOX_ALPHA, TXT_ALPHA, LINE_ALPHA, SKEL_ALPHA = 0.9, 0.95, 0.7, 0.4
+local ACCENT = Color3.fromRGB(124, 58, 237)
+
+-- Кости: { {кандидаты A}, {кандидаты B} } — R15 + фолбэк R6 (Torso / "Left Arm")
+local BONES = {
+    { { "Head" }, { "UpperTorso", "Torso" } },
+    { { "UpperTorso" }, { "LowerTorso" } },
+    { { "UpperTorso", "Torso" }, { "LeftUpperArm", "Left Arm" } },
+    { { "UpperTorso", "Torso" }, { "RightUpperArm", "Right Arm" } },
+    { { "LeftUpperArm", "Left Arm" }, { "LeftLowerArm" } },
+    { { "LeftLowerArm" }, { "LeftHand" } },
+    { { "RightUpperArm", "Right Arm" }, { "RightLowerArm" } },
+    { { "RightLowerArm" }, { "RightHand" } },
+    { { "LowerTorso", "Torso" }, { "LeftUpperLeg", "Left Leg" } },
+    { { "LeftUpperLeg", "Left Leg" }, { "LeftLowerLeg" } },
+    { { "LeftLowerLeg" }, { "LeftFoot" } },
+    { { "LowerTorso", "Torso" }, { "RightUpperLeg", "Right Leg" } },
+    { { "RightUpperLeg", "Right Leg" }, { "RightLowerLeg" } },
+    { { "RightLowerLeg" }, { "RightFoot" } },
+}
+
+local function newLine(it, thickness, alpha)
+    local o = Drawing.new("Line")
+    o.Thickness = thickness or 1
+    o.Transparency = alpha or LINE_ALPHA
+    o.Visible = false
+    it.all[#it.all + 1] = o
+    return o
+end
+
+local function newSquare(it, filled, alpha)
+    local o = Drawing.new("Square")
+    o.Filled = filled and true or false
+    o.Thickness = 1
+    o.Transparency = alpha or BOX_ALPHA
+    o.Visible = false
+    it.all[#it.all + 1] = o
+    return o
+end
+
+local function newText(it)
+    local o = Drawing.new("Text")
+    o.Size = 13
+    o.Center = true
+    o.Outline = true
+    o.Transparency = TXT_ALPHA
+    o.Visible = false
+    it.all[#it.all + 1] = o
+    return o
+end
+
+local function newTriangle(it)
+    local o = Drawing.new("Triangle")
+    o.Filled = true
+    o.Transparency = 0.15
+    o.Visible = false
+    it.all[#it.all + 1] = o
+    return o
+end
+
 local function getItem(plr)
     local it = items[plr]
     if not it then
-        it = {}
-        it.box = Drawing.new("Square")
-        it.box.Thickness = 1 it.box.Filled = false it.box.Transparency = 0.9 it.box.Visible = false
-        it.txt = Drawing.new("Text")
-        it.txt.Size = 13 it.txt.Center = true it.txt.Outline = true it.txt.Transparency = 0.95 it.txt.Visible = false
-        it.line = Drawing.new("Line")
-        it.line.Thickness = 1 it.line.Transparency = 0.7 it.line.Visible = false
+        it = { all = {} }
+        it.box = newSquare(it, false, BOX_ALPHA)
+        it.txt = newText(it)
+        it.line = newLine(it, 1, LINE_ALPHA)
         items[plr] = it
     end
     return it
 end
 
+-- Ленивые пулы: создаём только то, что реально включено, дальше только прячем.
+local function ensureFill(it)
+    if not it.boxFill then it.boxFill = newSquare(it, true, 0.85) end
+    return it.boxFill
+end
+
+local function ensureCorners(it)
+    if not it.corner then
+        local c = {}
+        for i = 1, 8 do c[i] = newLine(it, 1, BOX_ALPHA) end
+        it.corner = c
+    end
+    return it.corner
+end
+
+local function ensureHBar(it)
+    if not it.hbar then
+        it.hbar = newSquare(it, true, 0.35)  -- фон полоски
+        it.hfill = newSquare(it, true, 0.1)  -- заливка HP
+    end
+end
+
+local function ensureArrow(it)
+    if not it.arrow then it.arrow = newTriangle(it) end
+    return it.arrow
+end
+
+local function ensureSkel(it)
+    if not it.skel then
+        local s = {}
+        for i = 1, #BONES do s[i] = newLine(it, 1, SKEL_ALPHA) end
+        it.skel = s
+    end
+    return it.skel
+end
+
 local function hideItem(plr)
     local it = items[plr]
     if it then
-        it.box.Visible = false
-        it.txt.Visible = false
-        it.line.Visible = false
+        for i = 1, #it.all do it.all[i].Visible = false end
     end
+end
+
+local function dropItem(it)
+    if not it then return end
+    for i = 1, #it.all do
+        local o = it.all[i]
+        pcall(function() o:Remove() end)
+    end
+    it.all = {}
 end
 
 Players.PlayerRemoving:Connect(function(p)
     local it = items[p]
     if it then
-        pcall(function() it.box:Remove() end)
-        pcall(function() it.txt:Remove() end)
-        pcall(function() it.line:Remove() end)
+        dropItem(it)
         items[p] = nil
     end
 end)
 
+-- ===== ЦВЕТ / ФОРМАТ =====
+-- цвет по команде, если она есть; иначе базовый цвет бокса
+local function espColor(p)
+    local team = p.Team
+    local tc = team and team.TeamColor
+    local c = tc and tc.Color
+    if c then return c end
+    return BOX_COLOR
+end
+
+-- прозрачность: 0.15 на 100 ст -> 0.9 на maxdist
+local function fadeAlpha(dist)
+    local d1 = math.max(101, State.maxdist)
+    return 0.15 + 0.75 * math.clamp((dist - 100) / (d1 - 100), 0, 1)
+end
+
+local function hpColor(f)
+    if f > 0.5 then return Color3.fromRGB(0, 230, 118):Lerp(Color3.fromRGB(255, 221, 0), (1 - f) * 2) end
+    return Color3.fromRGB(255, 221, 0):Lerp(Color3.fromRGB(255, 60, 60), 1 - f * 2)
+end
+
+local function weaponName(ch)
+    if not ch then return nil end
+    local tool = ch:FindFirstChildOfClass("Tool") or ch:FindFirstChildWhichIsA("Tool", true)
+    return tool and tool.Name or nil
+end
+
+-- один рекурсивный поиск на имя за кадр, кэш на игрока
+local function partOf(ch, cache, names)
+    for i = 1, #names do
+        local n = names[i]
+        local hit = cache[n]
+        if hit == nil then
+            hit = ch:FindFirstChild(n, true) or false
+            cache[n] = hit
+        end
+        if hit then return hit end
+    end
+    return nil
+end
+
+local function hideCorners(it)
+    if it.corner then
+        for i = 1, #it.corner do it.corner[i].Visible = false end
+    end
+end
+
+local function hideSkel(it)
+    if it.skel then
+        for i = 1, #it.skel do it.skel[i].Visible = false end
+    end
+end
+
+-- Corner: 8 Line, сегмент = 25% стороны
+local function drawCorners(it, x, y, w, h, col, alpha)
+    local c = ensureCorners(it)
+    local sx, sy = w * 0.25, h * 0.25
+    local x2, y2 = x + w, y + h
+    c[1].From = Vector2.new(x, y)
+    c[1].To = Vector2.new(x + sx, y)
+    c[2].From = Vector2.new(x, y)
+    c[2].To = Vector2.new(x, y + sy)
+    c[3].From = Vector2.new(x2, y)
+    c[3].To = Vector2.new(x2 - sx, y)
+    c[4].From = Vector2.new(x2, y)
+    c[4].To = Vector2.new(x2, y + sy)
+    c[5].From = Vector2.new(x, y2)
+    c[5].To = Vector2.new(x + sx, y2)
+    c[6].From = Vector2.new(x, y2)
+    c[6].To = Vector2.new(x, y2 - sy)
+    c[7].From = Vector2.new(x2, y2)
+    c[7].To = Vector2.new(x2 - sx, y2)
+    c[8].From = Vector2.new(x2, y2)
+    c[8].To = Vector2.new(x2, y2 - sy)
+    for i = 1, 8 do
+        local l = c[i]
+        l.Color = col
+        l.Transparency = alpha
+        l.Visible = true
+    end
+end
+
+local function drawSkeleton(it, ch, cam, col)
+    local list = ensureSkel(it)
+    local cache = {}
+    for i = 1, #BONES do
+        local pair = BONES[i]
+        local l = list[i]
+        local a = partOf(ch, cache, pair[1])
+        local b = a and partOf(ch, cache, pair[2])
+        if a and b then
+            local pa, oa = cam:WorldToViewportPoint(a.Position)
+            local pb, ob = cam:WorldToViewportPoint(b.Position)
+            if oa and ob then
+                l.From = Vector2.new(pa.X, pa.Y)
+                l.To = Vector2.new(pb.X, pb.Y)
+                l.Color = col
+                l.Transparency = SKEL_ALPHA
+                l.Visible = true
+            else
+                l.Visible = false
+            end
+        else
+            l.Visible = false
+        end
+    end
+end
+
+-- Offscreen arrow: цель за кадром -> треугольник у края, радиус 0.42*min(vs)
+local function updateArrow(it, pos, cam, vs, cx, cy, col)
+    local a = ensureArrow(it)
+    local sp, on = cam:WorldToViewportPoint(pos)
+    if on then
+        a.Visible = false
+        return
+    end
+    local dir = Vector2.new(sp.X - cx, sp.Y - cy)
+    if cam.CFrame.LookVector:Dot(pos - cam.CFrame.Position) < 0 then
+        dir = Vector2.new(-dir.X, -dir.Y) -- цель за спиной
+    end
+    if dir.Magnitude < 1 or dir.X ~= dir.X or dir.Y ~= dir.Y then
+        dir = Vector2.new(0, -1)
+    end
+    dir = dir.Unit
+    local rad = 0.42 * math.min(vs.X, vs.Y)
+    local mid = Vector2.new(cx, cy)
+    local base = mid + dir * rad
+    local perp = Vector2.new(-dir.Y, dir.X) * 9
+    a.PointA = mid + dir * (rad + 14)
+    a.PointB = base + perp
+    a.PointC = base - perp
+    a.Color = col
+    a.Transparency = 0.15
+    a.Visible = true
+end
+
+-- ===== ГЛОБАЛЬНЫЙ ПРИЦЕЛ: кольцо FOV + crosshair (вне пула игроков) =====
+local fovCircle = Drawing.new("Circle")
+fovCircle.Color = ACCENT
+fovCircle.Thickness = 1
+fovCircle.NumSides = 64
+fovCircle.Filled = false
+fovCircle.Transparency = 0.45
+fovCircle.Visible = false
+
+local crossLines = {}
+for i = 1, 4 do
+    local l = Drawing.new("Line")
+    l.Thickness = 1
+    l.Color = Color3.fromRGB(255, 255, 255)
+    l.Transparency = 0.15
+    l.Visible = false
+    crossLines[i] = l
+end
+
+local CROSS_GAP, CROSS_LEN = 4, 6
+
+local function updateCrosshair(vs, on)
+    local cx, cy = vs.X / 2, vs.Y / 2
+    if not on then
+        for i = 1, 4 do crossLines[i].Visible = false end
+        return
+    end
+    local d, e = CROSS_GAP, CROSS_GAP + CROSS_LEN
+    local pts = {
+        { Vector2.new(cx, cy - d), Vector2.new(cx, cy - e) },
+        { Vector2.new(cx, cy + d), Vector2.new(cx, cy + e) },
+        { Vector2.new(cx - d, cy), Vector2.new(cx - e, cy) },
+        { Vector2.new(cx + d, cy), Vector2.new(cx + e, cy) },
+    }
+    for i = 1, 4 do
+        local l = crossLines[i]
+        l.From = pts[i][1]
+        l.To = pts[i][2]
+        l.Visible = true
+    end
+end
+
+-- ===== ANTI-AFK (только pcall + Idled, без SetCore) =====
+local function antiAfkPulse()
+    pcall(function()
+        local vu = game:GetService("VirtualUser")
+        local cam = Workspace.CurrentCamera
+        local cf = cam and cam.CFrame or CFrame.new()
+        vu:Button2Down(Vector2.new(0, 0), cf)
+        task.wait(1)
+        vu:Button2Up(Vector2.new(0, 0), cf)
+    end)
+end
+
+local function startAntiAfk()
+    if antiAfkConn then return end
+    antiAfkConn = LocalPlayer.Idled:Connect(antiAfkPulse)
+end
+
+local function stopAntiAfk()
+    if antiAfkConn then
+        pcall(function() antiAfkConn:Disconnect() end)
+        antiAfkConn = nil
+    end
+end
+
+local function syncAntiAfk()
+    if State.antiafk then startAntiAfk() else stopAntiAfk() end
+end
+
 local dbgShow, dbgAlive = 0, 0
 
 local function overlayTick()
+    if unloaded then return end
     local cam = Workspace.CurrentCamera
     if not cam then return end
     local vs = cam.ViewportSize
+    local cx, cy = vs.X / 2, vs.Y / 2
     local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart", true)
     local myPos = myHrp and myHrp.Position or cam.CFrame.Position
     local shown, aliveN = 0, 0
+
+    -- кольцо FOV и прицел — глобальные
+    fovCircle.Position = Vector2.new(cx, cy)
+    fovCircle.Radius = State.fov_size or 200
+    fovCircle.Visible = State.fov_ring and true or false
+    updateCrosshair(vs, State.crosshair and true or false)
 
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
@@ -149,43 +478,110 @@ local function overlayTick()
                 if dist > State.maxdist then
                     hideItem(p)
                 else
+                    local col = espColor(p)
                     local p1, on1 = cam:WorldToViewportPoint(head.Position + Vector3.new(0, 0.7, 0))
                     local p2, on2 = cam:WorldToViewportPoint(hrp.Position - Vector3.new(0, 2.8, 0))
-                    if not on1 or not on2 then
-                        hideItem(p)
-                    else
-                        shown += 1
-                        local h = math.abs(p2.Y - p1.Y)
-                        local w = h * 0.6
-                        if h < 5 then
-                            hideItem(p)
+                    local h = math.abs(p2.Y - p1.Y)
+                    local w = h * 0.6
+                    local vis = (on1 and on2 and h >= 5) and true or false
+                    if vis then shown += 1 end
+
+                    -- стрелка: только если цель за кадром
+                    if State.esp_arrows then
+                        updateArrow(it, hrp.Position, cam, vs, cx, cy, col)
+                    elseif it.arrow then
+                        it.arrow.Visible = false
+                    end
+
+                    local alpha = State.dist_fade and fadeAlpha(dist) or BOX_ALPHA
+                    local bx, by = p1.X - w / 2, p1.Y
+
+                    if vis and State.boxes then
+                        local style = State.box_style
+                        if style == "Corner" then
+                            it.box.Visible = false
+                            if it.boxFill then it.boxFill.Visible = false end
+                            drawCorners(it, bx, by, w, h, col, alpha)
+                        elseif style == "Filled" then
+                            hideCorners(it)
+                            local f = ensureFill(it)
+                            f.Size = Vector2.new(w, h)
+                            f.Position = Vector2.new(bx, by)
+                            f.Color = col
+                            f.Transparency = State.dist_fade and math.max(0.85, alpha) or 0.85
+                            f.Visible = true
+                            it.box.Size = Vector2.new(w, h)
+                            it.box.Position = Vector2.new(bx, by)
+                            it.box.Color = col
+                            it.box.Transparency = alpha
+                            it.box.Visible = true -- контур поверх заливки
                         else
-                            local col = Color3.fromRGB(255, 90, 70)
-                            if State.boxes then
-                                it.box.Size = Vector2.new(w, h)
-                                it.box.Position = Vector2.new(p1.X - w / 2, p1.Y)
-                                it.box.Color = col
-                                it.box.Visible = true
-                            else
-                                it.box.Visible = false
-                            end
-                            if State.names then
-                                it.txt.Text = p.DisplayName .. " [" .. math.floor(dist + 0.5) .. "m]"
-                                it.txt.Position = Vector2.new(p1.X, math.max(0, p1.Y - 16))
-                                it.txt.Color = col
-                                it.txt.Visible = true
-                            else
-                                it.txt.Visible = false
-                            end
-                            if State.tracers then
-                                it.line.From = Vector2.new(vs.X / 2, vs.Y)
-                                it.line.To = Vector2.new(p1.X, p2.Y)
-                                it.line.Color = col
-                                it.line.Visible = true
-                            else
-                                it.line.Visible = false
-                            end
+                            if it.boxFill then it.boxFill.Visible = false end
+                            hideCorners(it)
+                            it.box.Size = Vector2.new(w, h)
+                            it.box.Position = Vector2.new(bx, by)
+                            it.box.Color = col
+                            it.box.Transparency = alpha
+                            it.box.Visible = true
                         end
+                    else
+                        it.box.Visible = false
+                        if it.boxFill then it.boxFill.Visible = false end
+                        hideCorners(it)
+                    end
+
+                    if vis and State.names then
+                        local tag = p.DisplayName .. " [" .. math.floor(dist + 0.5) .. "m]"
+                        if State.esp_weapon then
+                            local wn = weaponName(ch)
+                            if wn then tag = tag .. " | " .. wn end
+                        end
+                        it.txt.Text = tag
+                        it.txt.Position = Vector2.new(p1.X, math.max(0, p1.Y - 16))
+                        it.txt.Color = col
+                        it.txt.Transparency = State.dist_fade and fadeAlpha(dist) or TXT_ALPHA
+                        it.txt.Visible = true
+                    else
+                        it.txt.Visible = false
+                    end
+
+                    if vis and State.tracers then
+                        it.line.From = Vector2.new(cx, vs.Y)
+                        it.line.To = Vector2.new(p1.X, p2.Y)
+                        it.line.Color = col
+                        it.line.Visible = true
+                    else
+                        it.line.Visible = false
+                    end
+
+                    -- Health bar: фон + заливка, высота = высота бокса
+                    if vis and State.esp_healthbar then
+                        local hum = ch:FindFirstChildOfClass("Humanoid", true)
+                        local frac = 1
+                        if hum and hum.MaxHealth > 0 then
+                            frac = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                        end
+                        ensureHBar(it)
+                        local fillH = math.clamp(math.floor(h * frac + 0.5), 1, h)
+                        it.hbar.Size = Vector2.new(3, h)
+                        it.hbar.Position = Vector2.new(bx - 7, by)
+                        it.hbar.Color = Color3.fromRGB(18, 18, 24)
+                        it.hbar.Transparency = 0.35
+                        it.hbar.Visible = true
+                        it.hfill.Size = Vector2.new(3, fillH)
+                        it.hfill.Position = Vector2.new(bx - 7, by + (h - fillH))
+                        it.hfill.Color = hpColor(frac)
+                        it.hfill.Transparency = 0.1
+                        it.hfill.Visible = true
+                    else
+                        if it.hbar then it.hbar.Visible = false end
+                        if it.hfill then it.hfill.Visible = false end
+                    end
+
+                    if State.esp_skeleton then
+                        drawSkeleton(it, ch, cam, col)
+                    else
+                        hideSkel(it)
                     end
                 end
             end
@@ -525,7 +921,11 @@ local StyleA = (function()
         wmTitle.Size = UDim2.new(0, 70, 1, 0) wmTitle.Position = UDim2.new(1, -82, 0, 0)
         wmTitle.TextXAlignment = Enum.TextXAlignment.Right wmTitle.ZIndex = 21
 
-        local ui = { gui = gui, window = win, state = state, pages = {}, nav = {}, rows = {}, listening = nil }
+        local ui = {
+            gui = gui, window = win, state = state,
+            blur = blur, watermark = wm, toasts = toastHolder, content = content,
+            pages = {}, nav = {}, rows = {}, listening = nil,
+        }
 
         -- ---------- elements ----------
         local function newPage(name)
@@ -902,16 +1302,58 @@ local UI = StyleA.new({
 
 local setStat = UI:Stat("seen 0 / alive 0")
 
+-- ===== UNLOAD (снять весь Drawing-оверлей: игроки + глобальные + коннекты) =====
+local function unloadAll()
+    if unloaded then return end
+    unloaded = true
+    stopAntiAfk()
+    if connRender then
+        pcall(function() connRender:Disconnect() end)
+        connRender = nil
+    end
+    if connHeartbeat then
+        pcall(function() connHeartbeat:Disconnect() end)
+        connHeartbeat = nil
+    end
+    pcall(function() fovCircle:Remove() end)
+    for i = 1, #crossLines do
+        local o = crossLines[i]
+        pcall(function() o:Remove() end)
+    end
+    for p, it in pairs(items) do
+        dropItem(it)
+        items[p] = nil
+    end
+    pcall(function() UI:Destroy() end)
+end
+
 -- Visuals
 local tabVisuals = UI:Tab("Visuals", "eye")
 tabVisuals:Section("players")
 tabVisuals:Toggle("Wallhack", "enabled", true)
-tabVisuals:Toggle("2D boxes", "boxes", true)
+tabVisuals:Toggle("Boxes", "boxes", true)
 tabVisuals:Toggle("Names + distance", "names", true)
+tabVisuals:Toggle("Weapon", "esp_weapon", true)
+tabVisuals:Toggle("Health bar", "esp_healthbar", true)
 tabVisuals:Toggle("Tracers", "tracers", false)
-tabVisuals:Toggle("Enemies only", "enemies_only", true)
-tabVisuals:Toggle("Team check", "team_check", true)
-tabVisuals:Slider("Max distance", "maxdist", 300, 3000, "m")
+tabVisuals:Toggle("Skeleton", "esp_skeleton", false)
+tabVisuals:Toggle("Offscreen arrows", "esp_arrows", false)
+tabVisuals:Toggle("Crosshair", "crosshair", false)
+tabVisuals:Section("style")
+tabVisuals:Cycle("Box style", "box_style", { "2D", "Corner", "Filled" })
+tabVisuals:Toggle("Distance fade", "dist_fade", false)
+tabVisuals:Section("aim")
+tabVisuals:Toggle("FOV ring", "fov_ring", true)
+tabVisuals:Slider("FOV size", "fov_size", 40, 600, "px")
+tabVisuals:Section("misc")
+tabVisuals:Toggle("Anti-AFK", "antiafk", true)
+
+-- Targets
+local tabTargets = UI:Tab("Targets", "target")
+tabTargets:Section("filter")
+tabTargets:Toggle("Enemies only", "enemies_only", true)
+tabTargets:Toggle("Team check", "team_check", true)
+tabTargets:Slider("Max distance", "maxdist", 300, 3000, "m")
 
 -- Config
 local tabConfig = UI:Tab("Config", "settings")
@@ -919,28 +1361,23 @@ tabConfig:Section("interface")
 tabConfig:Keybind("Toggle key", "ui_key")
 tabConfig:Toggle("Notifications", "ui_toasts", true)
 tabConfig:Section("session")
-tabConfig:Button("Unload JakoScripts", "ghost", function()
-    UI:Destroy()
-    for p, it in pairs(items) do
-        pcall(function() it.box:Remove() end)
-        pcall(function() it.txt:Remove() end)
-        pcall(function() it.line:Remove() end)
-        items[p] = nil
-    end
-end)
+tabConfig:Button("Unload JakoScripts", "ghost", unloadAll)
 tabConfig:Info("Drawing-оверлей: в игре не создаётся ни одной детали.")
 
 -- ===== LOOP (боксы каждый кадр — плавно и дёшево) =====
-RunService.RenderStepped:Connect(overlayTick)
+connRender = RunService.RenderStepped:Connect(overlayTick)
 
 local tStat = 0
-RunService.Heartbeat:Connect(function(dt)
+connHeartbeat = RunService.Heartbeat:Connect(function(dt)
     tStat += dt
     if tStat >= 0.5 then
         tStat = 0
+        syncAntiAfk()
         setStat("seen " .. dbgShow .. " / alive " .. dbgAlive)
     end
 end)
+
+syncAntiAfk()
 
 UI:Toast("JakoScripts WH v1 loaded", "ok")
 print("[JakoScripts WH v1 · Style A] loaded")

@@ -447,7 +447,8 @@ def render(spec, out_path):
 def main():
     args = sys.argv[1:]
     if not args or args == ["--all"]:
-        args = sorted(f for f in os.listdir(".") if f.startswith("JakoScripts_") and f.endswith(".lua"))
+        args = sorted(f for f in os.listdir(".")
+                       if f.startswith("JakoScripts_") and f.endswith(".lua") and not f.endswith("_obf.lua"))
     for path in args:
         spec = parse_ui(path)
         if not spec["tabs"]:

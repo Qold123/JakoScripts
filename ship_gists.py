@@ -112,10 +112,11 @@ def build_obf(plain_path, key, force=False):
     out = obf_path(plain_path, key)
     if os.path.exists(out) and not force:
         return out
-    if not os.path.exists("light_obf.py"):
+    tool = "light_obf_safe.py" if os.path.exists("light_obf_safe.py") else "light_obf.py"
+    if not os.path.exists(tool):
         return None
     prefix = "_" + key[:2].upper()
-    r = run([PY, "light_obf.py", plain_path, "-o", out, "--prefix", prefix])
+    r = run([PY, tool, plain_path, "-o", out, "--prefix", prefix])
     if r.returncode != 0:
         print(f"  obf build failed for {plain_path}: {r.stderr.strip()[:200]}")
         return None

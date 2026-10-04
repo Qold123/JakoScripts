@@ -4,5 +4,8 @@ _session_dump/
 _gists/
 _dump_*
 _*.py
+_out_*
+_probe_*
 __pycache__/
 *.log
+*_obf.lua
