@@ -11,8 +11,8 @@
       на диске и глобалы. Единственный источник имени — таблица BRAND ниже.
 
     ── запуск ───────────────────────────────────────────────────
-      инжектор, одной строкой:
-        loadstring(game:HttpGet("https://raw.githubusercontent.com/USER/REPO/main/JakoScripts_loader.lua"))()
+      инжектор, одной строкой (репозиторий приватный — токен в CFG.token бутстрапа):
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts_loader.lua"))()
       локально, если файл лежит в workspace экзекутора:
         loadstring(readfile("JakoScripts.lua"))()
 

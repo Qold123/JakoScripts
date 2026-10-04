@@ -21,7 +21,7 @@ JakoScripts | MM2  v3.0
 **Публичный репозиторий.** Одна строка, токен не нужен:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/popkamamont940-create/JakoScripts/main/JakoScripts_loader.lua"))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts_loader.lua"))()
 ```
 
 **Локально.** Если файл лежит в workspace экзекутора:

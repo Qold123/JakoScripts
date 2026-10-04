@@ -23,15 +23,15 @@ local CFG = {
     -- ── приватный репозиторий ────────────────────────────────────
     -- token пустой -> обычный raw (публичный репо или локальный файл).
     -- token заполнен -> GitHub Contents API с Bearer, потом raw с токеном в URL.
-    owner          = "popkamamont940-create",
+    owner          = "JakoScripts",
     repo           = "JakoScripts",
     branch         = "main",
     token          = "",   -- fine-grained PAT: только этот репо, Contents: Read-only
     -- ── публичный raw-URL (используется когда token пустой) ──────
-    primary        = "https://raw.githubusercontent.com/popkamamont940-create/JakoScripts/main/JakoScripts.lua",
+    primary        = "https://raw.githubusercontent.com/JakoScripts/JakoScripts/main/JakoScripts.lua",
     mirrors        = {
-        "https://cdn.jsdelivr.net/gh/popkamamont940-create/JakoScripts@main/JakoScripts.lua",
-        "https://raw.githack.com/popkamamont940-create/JakoScripts/main/JakoScripts.lua",
+        "https://cdn.jsdelivr.net/gh/JakoScripts/JakoScripts@main/JakoScripts.lua",
+        "https://raw.githack.com/JakoScripts/JakoScripts/main/JakoScripts.lua",
     },
     -- локальная копия в workspace экзекутора (Delta / Xeno / Solara кладут файлы рядом)
     local_file     = "JakoScripts.lua",

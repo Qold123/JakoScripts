@@ -18,7 +18,7 @@
 ]]
 
 local CFG = {
-    owner  = "popkamamont940-create",
+    owner  = "JakoScripts",
     repo   = "JakoScripts",
     branch = "main",
     file   = "JakoScripts.lua",
