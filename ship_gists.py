@@ -21,6 +21,7 @@ PY = sys.executable
 # local file -> (gist id, remote plain name, remote obf name, title)
 TARGETS = {
     "mm2":        ("JakoScripts.lua",            "d9426b0772256a4709608e96f710508d", "vanta_mm2.lua",          "vanta_mm2_obf.lua",          "MM2 v4.0"),
+    "mm2standalone": ("JakoScripts_mm2_standalone.lua", "2ad75acf1f3a734418594bb44d42f09e", "vanta_mm2_standalone.lua", "vanta_mm2_standalone_obf.lua", "MM2 standalone v1"),
     "lostfront":  ("JakoScripts_lostfront.lua",  "de7c068ca91e534ed54f3e64d191483f", "vanta_lostfront.lua",    "vanta_lostfront_obf.lua",    "Lost Front v2.4"),
     "stealegg":   ("JakoScripts_stealegg.lua",   "5f6e4bcab0f3df2680a1944a29362b1a", "vanta_stealegg.lua",     "vanta_stealegg_obf.lua",     "Steal an Egg v2.1"),
     "bladeball":  ("JakoScripts_bladeball.lua",  "0ce0c7ccfe1655547e19253ab16138b2", "vanta_bladeball.lua",    "vanta_bladeball_obf.lua",    "Blade Ball v2.1"),
